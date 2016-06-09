@@ -39,7 +39,7 @@ for index in df.index:
 	target = df.ix[index]["target"]
 	guide_sequence = df.ix[index]["sequence"]
 	# add fasta entry
-	sequence = u6 + guide_sequence + g + rest
+	sequence = u6 + g + guide_sequence + rest
 	header = fasta_header_template.format(chrom=target, length=len(sequence))
 
 	fasta_handle.write(header)

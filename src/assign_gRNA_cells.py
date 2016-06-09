@@ -28,8 +28,8 @@ def get_reads_in_construct(bam, guide_annotation):
         "AAGTAATAATTTCTTGGGTAGTTTGCAGTTTTAAAATTAT"
         "GTTTTAAAATGGACTATCATATGCTTACCGTAACTTGAAA"
         "GTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACC")
-    "CAGGATTGGGGGCGAGTCGG"  # DNMT3B as example
     g = "G"
+    "CAGGATTGGGGGCGAGTCGG"  # DNMT3B as example
     rest = (
         "GTTTTAGAGCTAGAAATAGCAAGTTAAAATAAGGCTA"
         "GTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGT"
@@ -55,7 +55,7 @@ def get_reads_in_construct(bam, guide_annotation):
 
         # get position of alignment
         guide_seq = guide_annotation[guide_annotation["target"] == chrom]['sequence'].squeeze()
-        chrom_size = len(u6 + guide_seq + g + rest)
+        chrom_size = len(u6 + g + guide_seq + rest)
         guide_start_pos = len(u6) + 1
         guide_end_pos = chrom_size - len(rest)
 
