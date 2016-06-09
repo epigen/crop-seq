@@ -33,8 +33,8 @@ ht_genes = f['gene_names_het'][:]  # heterogeneous genes
 
 #  Load data
 exp = pd.read_csv(os.path.join(root_dir, "data/runs/BSF_0222_HEK293T_Cas9/digital_expression.100genes.assigned.tsv"), sep="\t", index_col=0)
-cells_per_gene = exp.apply(lambda x: (x > 1).sum(), axis=1)
-genes_per_cell = exp.apply(lambda x: (x > 1).sum(), axis=0)
+cells_per_gene = exp.apply(lambda x: (x > 0).sum(), axis=1)
+genes_per_cell = exp.apply(lambda x: (x > 0).sum(), axis=0)
 
 # Gene/cells thresholds
 n_cells = 10
@@ -187,7 +187,7 @@ axis[1].set_xlabel('gene'), axis[1].set_ylabel('gene')
 
 # Get "differential"
 diff = np.log2(
-    (1 + corrected[corrected.columns[guides == "DNMT3B"]].median(1)) /
+    (1 + corrected[corrected.columns[guides == "MBD1"]].median(1)) /
     (1 + corrected[corrected.columns[guides == "filler"]].median(1))).sort_values()
 
 sns.clustermap(
