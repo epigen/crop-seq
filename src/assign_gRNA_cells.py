@@ -302,7 +302,7 @@ def big_heatmap(x, complete_assignment):
 
 # root_dir = "/scratch/users/arendeiro/dropseqtests/BSF_0222_HEK293T_Cas9/"
 root_dir = "/home/afr/workspace/crop-seq/"
-output_dir = os.path.join(root_dir, "quantification_500genes")
+output_dir = os.path.join(root_dir, "quantification")  # _500genes")
 
 for dir in [root_dir, output_dir]:
     if not os.path.exists(dir):
@@ -425,3 +425,38 @@ for n_cells in [3, 10, 100]:
 sns.clustermap(matrix_norm.ix[['TET2_gene', 'MBD1_gene', 'filler_gene']])
 
 sns.clustermap(matrix_norm.ix[['TET2', 'TET2_gene', 'MBD1_gene', 'filler_gene']])
+
+
+# Plot
+reads = pd.read_csv(os.path.join(output_dir, "guide_cell_quantification.csv"), index_col=0)
+
+scores = pd.read_csv(os.path.join(output_dir, "guide_cell_scores.csv"), index_col=0)
+complete_assignment = pd.read_csv(os.path.join(output_dir, "guide_cell_assignment.csv"))
+
+# calculate abs amount of basepairs overlaping the gRNA of the assigned cell vs all others
+overlap_per_cell = reads.groupby(["cell"])['overlap'].sum()
+overlap_per_guide = reads.groupby(["cell", "chrom"])['overlap'].sum()
+
+overlap_assignment = scores.apply(lambda x: overlap_per_guide.ix[x.name, x['assignment']] if not pd.isnull(x['assignment']) else pd.np.nan, axis=1)
+
+overlap_others = overlap_per_cell - overlap_assignment
+
+sns.distplot(np.log2(1 + overlap_others.dropna()), kde=False, bins=2000)
+
+counts = overlap_others.dropna().value_counts()
+
+plt.plot(counts.index, np.log2(1 + counts.values))
+
+
+sns.jointplot(overlap_others, overlap_assignment)
+plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.svg"), bbox_inches="tight")
+plt.close("all")
+sns.jointplot(overlap_others, np.log2(1 + overlap_assignment))
+plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.ylog.svg"), bbox_inches="tight")
+plt.close("all")
+sns.jointplot(np.log2(1 + overlap_others), np.log2(1 + overlap_assignment))
+plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.bothlog.svg"), bbox_inches="tight")
+plt.close("all")
+sns.jointplot(overlap_others, overlap_assignment, xlim=(-100, overlap_assignment.max() + 100), ylim=(-100, overlap_assignment.max() + 100))
+plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.lims.svg"), bbox_inches="tight")
+plt.close("all")
