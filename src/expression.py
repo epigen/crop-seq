@@ -106,7 +106,7 @@ def unsupervised(df, prefix=""):
     fig.savefig(os.path.join(results_dir, "clustering.{}.png".format(prefix)), bbox_inches="tight")
 
 
-def differential_genes(pos, neg, df, assignment, prefix=""):
+def differential_genes(pos, neg, df, assignment, prefix="", method="mannwhitney"):
     """
     """
     from scipy.stats import mannwhitneyu
@@ -114,7 +114,7 @@ def differential_genes(pos, neg, df, assignment, prefix=""):
     import parmap
     from statsmodels.sandbox.stats.multicomp import multipletests
 
-    def test(g):
+    def mannwhitneyu_test(g):
         """
         Test two groups of cells for differences in gene `g`
         using Mann-Whitney's U test.
@@ -125,6 +125,9 @@ def differential_genes(pos, neg, df, assignment, prefix=""):
         a_ = a.mean()
         b_ = b.mean()
         return [a_, b_, np.log2((a_) / (b_))] + list(mannwhitneyu(a, b))
+
+    def test_2():
+        return
 
     print("Doing differnetial gene expression for experiment: '{}'".format(experiment))
     print("Comparing expression of {} with {} cells in {} genes.".format(pos.shape[1], neg.shape[1], df.shape[0]))
@@ -137,7 +140,7 @@ def differential_genes(pos, neg, df, assignment, prefix=""):
             lambda x:
                 pd.Series(x),
                 parmap.map(
-                    test,
+                    mannwhitneyu_test if method == "mannwhitney" else test_2,
                     pos.index,
                     parallel=True
                 )
@@ -151,6 +154,13 @@ def differential_genes(pos, neg, df, assignment, prefix=""):
     stats["log_q_value"] = -np.log10(stats["q_value"])
     stats.index.name = "gene"
     stats.to_csv(os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix)), index=True)
+
+    return stats
+
+
+def plot_deg_stats(stats, prefix=""):
+    """
+    """
 
     # Volcano plot
     colors = [sns.color_palette("colorblind")[2] if x < 0.05 else sns.color_palette("colorblind")[0] for x in stats["q_value"]]
@@ -175,53 +185,64 @@ def differential_genes(pos, neg, df, assignment, prefix=""):
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "differential_expression.{}.stimutation.png".format(prefix)), bbox_inches="tight", dpi=300)
 
-    # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
-    df2 = df.ix[abs(stats["fold_change"]).sort_values().head(500).index.tolist()][df.sum().sort_values().tail(2000).index.tolist()].to_dense()
 
-    # color gRNAs
-    # remove opposite library
+def plot_deg_heatmaps(df, assignment, stats, prefix=""):
+    """
+    """
+    def get_colors(d, assignment):
+        # make color dict
+        pallete = sns.color_palette("colorblind") * 10
+        gRNA_color_dict = dict(zip(assignment["group"].unique(), pallete))
+        gRNA_color_dict[pd.np.nan] = "grey"
+
+        # match colors with matrix
+        stimulation_colors = ["red" if "un" in x else "green" for x in d.columns]
+        cell_names = d.columns.str.lstrip("un|st")
+        ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+        ass = [x if type(x) == str else pd.np.nan for x in ass]
+        gRNA_colors = [gRNA_color_dict[x] for x in ass]
+
+        return [stimulation_colors, gRNA_colors]
+
+    # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
+    df2 = df.ix[
+        stats[
+            (stats["q_value"] < 0.05) &  # filter by p-value
+            (abs(stats["fold_change"]) > np.log2(1.5))  # filter by fold-change
+        ].sort_values("q_value").head(500).index.tolist()
+    ]
+    # save stats of diff genes
+    stats.ix[df2.index.tolist()].to_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index=True)
+
+    # get top 500 cells from each condition
+    df3 = df2[
+        df2[df2.columns[df2.columns.str.contains("st")]].sum().sort_values().tail(1500).index.tolist() +
+        df2[df2.columns[df2.columns.str.contains("un")]].sum().sort_values().tail(1500).index.tolist()
+    ]
+
+    # remove opposite gRNA library
     if "TCR" in experiment:
         assignment = assignment[~assignment['assignment'].str.contains("Wnt")]
     elif "WNT" in experiment:
         assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
-    # make color dict
-    pallete = sns.color_palette("colorblind") * 10
-    gRNA_color_dict = dict(zip(assignment["group"].unique(), pallete))
-    gRNA_color_dict[pd.np.nan] = "grey"
-
-    # match colors with current sort order
-    stimulation_colors = ["red" if "un" in x else "green" for x in df2.columns]
-    cell_names = df2.columns.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else pd.np.nan for x in ass]
-    gRNA_colors = [gRNA_color_dict[x] for x in ass]
 
     g = sns.clustermap(
-        df2, z_score=0,
-        col_colors=[stimulation_colors, gRNA_colors],
-        cmap="GnBu",
+        df3, z_score=0,
+        col_colors=get_colors(df3, assignment),
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.png".format(prefix)), bbox_inches="tight", dpi=300)
 
-    # sort order
-    e = df2.ix[stats.fold_change.sort_values().index].dropna()
-    e = e[e.columns[e.sum() != 0]]
-    ee = e.T.sort_values(e.index.tolist(), ascending=False).T
-
-    # match colors with current sort order
-    stimulation_colors = ["red" if "un" in x else "green" for x in ee.columns]
-    cell_names = ee.columns.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else pd.np.nan for x in ass]
-    gRNA_colors = [gRNA_color_dict[x] for x in ass]
+    # sort rows by fold change, columns by stimulation
+    df4 = df3.ix[stats['fold_change'].sort_values().index].dropna()
+    df4 = df4[df4.columns[df4.sum() != 0]]
+    df4 = df4.T.sort_values(df4.index.tolist(), ascending=False).T
 
     g = sns.clustermap(
-        ee, z_score=0,
-        col_colors=[stimulation_colors, gRNA_colors],
-        cmap="GnBu",
+        df4, z_score=1,
+        col_colors=get_colors(df4, assignment),
         row_cluster=False, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
@@ -230,18 +251,11 @@ def differential_genes(pos, neg, df, assignment, prefix=""):
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sorted_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
 
     # sort by stimulation order
-    df3 = df2.sort_index(axis=1)
-    # match colors with current sort order
-    stimulation_colors = ["red" if "un" in x else "green" for x in df3.columns]
-    cell_names = df3.columns.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else pd.np.nan for x in ass]
-    gRNA_colors = [gRNA_color_dict[x] for x in ass]
+    df4 = df3.sort_index(axis=1)
 
     g = sns.clustermap(
-        ee, z_score=0,
-        col_colors=[stimulation_colors, gRNA_colors],
-        cmap="GnBu",
+        df4, z_score=0,
+        col_colors=get_colors(df4, assignment),
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
@@ -251,7 +265,52 @@ def differential_genes(pos, neg, df, assignment, prefix=""):
 
     #
 
-    #
+    # sort by stimulation order and gRNA order
+    cell_names = df3.columns.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else pd.np.nan for x in ass]
+    df3.loc["ass", :] = ass
+    df3.loc["sti", :] = [x[:2] for x in df3.columns]
+    order = df3.T[["sti", "ass"]].sort_values(["sti", "ass"]).index.tolist()
+    df3 = df3.drop(["sti", "ass"])
+
+    df4 = df3[order].astype(float)
+
+    g = sns.clustermap(
+        df4, z_score=0,
+        col_colors=get_colors(df4, assignment),
+        row_cluster=True, col_cluster=False,
+        xticklabels=False, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # Group by stimulation / gRNA
+    # sort by stimulation order and gRNA order
+    cell_names = df3.columns.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else pd.np.nan for x in ass]
+
+    df4 = df3.T
+    df4["ass"] = ass
+    df4['ass'] = df4['ass'].astype("category")
+    df4["sti"] = [x[:2] for x in df4.index]
+    df4['sti'] = df4['sti'].astype("category")
+
+    df5 = df4.groupby(['sti', 'ass']).median().T
+
+    g = sns.clustermap(
+        df5,  # z_score=0,
+        # col_colors=get_colors(df5, assignment),
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.png".format(prefix)), bbox_inches="tight", dpi=300)
 
     #
 
@@ -346,7 +405,9 @@ assignment.loc[tr.index, "group"] = tr
 assignment["experiment_group"] = assignment["experiment"].str.extract("^(.*)_.*$")
 
 n_genes = 500
-experiment = "CROP-seq_HEK293T_4_WNT"
+experiment = "CROP-seq_Jurkat_TCR"
+prefix = experiment + "_stimulation.allcells"
+method = "mannwhitney"
 
 # get expression
 for n_genes in [500]:
@@ -398,7 +459,8 @@ for n_genes in [500]:
         pos = matrix_norm[matrix_norm.columns[matrix_norm.columns.str.contains("st")].tolist()]
         neg = matrix_norm[matrix_norm.columns[matrix_norm.columns.str.contains("un")].tolist()]
 
-        differential_genes(pos, neg, matrix_norm, assignment, prefix=experiment + "_stimulation.allcells")
+        stats = differential_genes(pos, neg, matrix_norm, assignment, prefix=experiment + "_stimulation.allcells")
+        stats = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix)), index_col=0)
 
         # variant B:
         # only "CTRL" cells
@@ -413,7 +475,7 @@ for n_genes in [500]:
         pos = ctrl_matrix[ctrl_matrix.columns[ctrl_matrix.columns.str.contains("st")].tolist()].to_dense()
         neg = ctrl_matrix[ctrl_matrix.columns[ctrl_matrix.columns.str.contains("un")].tolist()].to_dense()
 
-        differential_genes(pos, neg, ctrl_matrix, assignment, prefix=experiment + "_stimulation.ctrlcells")
+        stats = differential_genes(pos, neg, ctrl_matrix, assignment, prefix=experiment + "_stimulation.ctrlcells")
 
         # Supervised
         # Approach 1:
