@@ -190,6 +190,8 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     """
     """
     from matplotlib.colors import colorConverter
+    from sklearn.manifold import MDS, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE
+    from sklearn.decomposition import PCA
 
     def get_grna_colors(d, assignment):
         # make color dict
@@ -317,6 +319,8 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
 
+    #
+
     # Group by stimulation / gRNA, get mean expression
 
     # use all cells for this
@@ -342,8 +346,9 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "differential_expression.{}.cell_number_per_group.svg".format(prefix)), bbox_inches="tight")
 
-    # Filter out genes with less than 10 cells
+    # Filter out genes with less than 10 cells and save
     df5 = df5[c[c >= 10].index]
+    df5.to_csv(os.path.join(results_dir, "differential_expression.{}.group_means.csv".format(prefix)), index=True)
 
     # cluster
     g = sns.clustermap(
@@ -376,10 +381,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     #
 
     # Dimentionality reduction methods
-    from sklearn.manifold import MDS, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE
-    from sklearn.decomposition import PCA
-
-    # Try several methods
+    # try several
     methods = ["PCA", "LocallyLinearEmbedding", "Isomap", "SpectralEmbedding", "TSNE", "MDS"]
 
     for name, matrix in [("groups", df5.T), ("cells", df3.T)]:
@@ -419,8 +421,6 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
                 #     ncol=2 if feature == "organ" else 1,
                 #     loc='center left',
                 #     bbox_to_anchor=(1, 0.5))
-
-            print("clustering.%s.%s.png" % (method, name))
             fig.savefig(os.path.join(results_dir, "differential_expression.{}.{}.{}.png".format(prefix, name, method)), bbox_inches="tight", dpi=300)
 
 
@@ -452,6 +452,157 @@ def enrich_signature(degs, prefix=""):
             axis.set_xlabel("Combined score")
             sns.despine(fig)
             fig.savefig(os.path.join(results_dir, "differential_expression.{}.enrichr.{}.svg".format(prefix + name, gene_set_library)), bbox_inches="tight")
+
+
+def assign_cells_to_signature(degs, df, assignment, prefix=""):
+    """
+    """
+    group_means = pd.read_csv(
+        os.path.join(results_dir, "differential_expression.{}.group_means.csv".format(prefix)),
+        index_col=0,
+        header=[0, 1], skipinitialspace=True, tupleize_cols=True)
+    group_means.columns = pd.MultiIndex.from_tuples(group_means.columns)
+
+    # Get trait-specific signature
+    # 1. get median accessibility of each group
+    x1 = group_means["st", "CTRL"]
+    x2 = group_means["un", "CTRL"]
+
+    # 2. get signature matrix
+    # here, bounds are set to (-20, 20) so that the extremes of the signature represent -20% or 120% of the signature
+    # this is done because the extreme values (0 and 100%) values correspond to the median value within each group,
+    # meaning that some samples are expected to surpass those values.
+    sign = generate_signature_matrix(np.vstack([x1, x2]).T, n=101, bounds=(-20, 20))
+
+    # 3. get signature value of each patient
+    # x[[s.name for s in samples]].apply(best_signature_matrix, matrix=sign, axis=1)
+    sigs = list()
+    for i, cell in enumerate(df.columns):
+        if i % 20 == 0:
+            print(i)
+        sigs.append(best_signature_matrix(array=df.ix[group_means.index][cell], matrix=sign))
+
+    # Save clinical trait signatures for all samples
+    sigs.to_csv(os.path.join(results_dir, "signatures.all_cells.{}.csv".format(prefix)))
+
+    # Aggregate by condition/gene
+    df2 = df.copy().T
+    # use all cells for this
+    cell_names = df2.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else "Unassigned" for x in ass]
+
+    df2["ass"] = ass
+    df2['ass'] = df2['ass'].astype("category")
+    df2["sti"] = [x[:2] for x in df2.index]
+    df2['sti'] = df2['sti'].astype("category")
+
+    # add signatures
+    df2['signature'] = pd.Series(sigs).astype(np.int64)
+
+    # plot distibution
+    sigs_mean = df2.groupby(['sti', 'ass'])['signatures'].mean().sort_values()
+
+    fig, axis = plt.subplots(1, figsize=(10, 8))
+    sns.stripplot(x=sigs_mean, y=sigs_mean.index, orient="horiz", ax=axis)
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.strip.svg".format(prefix)), bbox_inches="tight")
+
+    # Given the known condition of each group, what is the deviation from that?
+    # plot as rank of mean
+    fig, axis = plt.subplots(1, figsize=(10, 8))
+    axis.scatter(sigs_mean.rank(ascending=False), sigs_mean)
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.rank.svg".format(prefix)), bbox_inches="tight")
+
+    # plot as violinplots (values per cell)
+    fig, axis = plt.subplots(1, figsize=(16, 8))
+    sns.violinplot(x="sti", y="signatures", hue="ass", data=df2, ax=axis)
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot.svg".format(prefix)), bbox_inches="tight")
+
+    fig, axis = plt.subplots(1, figsize=(16, 8))
+    sns.violinplot(x="ass", y="signatures", hue="sti", data=df2, ax=axis)
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot2.svg".format(prefix)), bbox_inches="tight")
+
+    # Calculate deviation from CTRL for each stimulation
+    s = (sigs_mean.ix['st'] - sigs_mean.ix['st', "CTRL"]).sort_values(ascending=False)
+    u = (sigs_mean.ix['un'] - sigs_mean.ix['un', "CTRL"]).sort_values(ascending=False)
+    sl = np.log2(sigs_mean.ix['st'] / sigs_mean.ix['st', "CTRL"]).sort_values(ascending=False)
+    ul = np.log2(sigs_mean.ix['un'] / sigs_mean.ix['un', "CTRL"]).sort_values(ascending=False)
+
+    fig, axis = plt.subplots(2, figsize=(8, 8))
+    sns.barplot(s, s.index, orient="horiz", order=s.index, ax=axis[0])
+    sns.barplot(u, u.index, orient="horiz", order=u.index, ax=axis[1])
+    axis[0].set_xlabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[1].set_xlabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[0].set_ylabel("Stimulated")
+    axis[1].set_ylabel("Unstimulated")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature_deviation.rank.barplot.svg".format(prefix)), bbox_inches="tight")
+
+    fig, axis = plt.subplots(2, figsize=(8, 8))
+    sns.barplot(sl, sl.index, orient="horiz", order=sl.index, ax=axis[0])
+    sns.barplot(ul, ul.index, orient="horiz", order=ul.index, ax=axis[1])
+    axis[0].set_xlabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[1].set_xlabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[0].set_ylabel("Stimulated")
+    axis[1].set_ylabel("Unstimulated")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature_deviation.ranklog2.barplot.svg".format(prefix)), bbox_inches="tight")
+
+    fig, axis = plt.subplots(2, figsize=(8, 8))
+    axis[0].scatter(s.rank(ascending=False), s)
+    axis[1].scatter(u.rank(ascending=False), u)
+    axis[0].set_ylabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[1].set_ylabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[0].set_title("Stimulated")
+    axis[1].set_title("Unstimulated")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature_deviation.rank.scatter.svg".format(prefix)), bbox_inches="tight")
+
+    fig, axis = plt.subplots(2, figsize=(8, 8))
+    axis[0].scatter(sl.rank(ascending=False), sl)
+    axis[1].scatter(ul.rank(ascending=False), ul)
+    axis[0].set_ylabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[1].set_ylabel("Signature deviation from control (propensity to cause stimulation)")
+    axis[0].set_title("Stimulated")
+    axis[1].set_title("Unstimulated")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature_deviation.ranklog2.scatter.svg".format(prefix)), bbox_inches="tight")
+
+
+def generate_signature_matrix(array, n=101, bounds=(0, 0)):
+    """
+    :param np.array: 2D np.array
+    """
+    def get_score(i, j, p, n):
+        """Get signature score between p% of the values of the two groups."""
+        return ((float(i) * p) + (float(j) * (n - p))) / n
+
+    matrix = np.zeros([array.shape[0], n])
+    for x in range(array.shape[0]):
+        for y, p in enumerate(np.linspace(0 + bounds[0], n + bounds[1], n)):
+            matrix[x, y] = get_score(array[x, 0], array[x, 1], p, n)
+
+    return matrix
+
+
+def best_signature_matrix(array, matrix):
+    """
+    :param np.array: 2D np.array
+    """
+    from scipy.stats import pearsonr
+
+    cors = dict()
+    for i in range(matrix.shape[1]):
+        cors[i] = pearsonr(array, matrix[:, i])
+
+    return cors.values().index(max(cors.values()))  # index
+    # (
+    # cors.values().index(max(cors.values())),  # index
+    # max(cors.values())  # highest correlation value
 
 
 def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
