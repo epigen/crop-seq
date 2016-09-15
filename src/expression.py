@@ -189,20 +189,50 @@ def plot_deg_stats(stats, prefix=""):
 def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     """
     """
-    def get_colors(d, assignment):
+    from matplotlib.colors import colorConverter
+
+    def get_grna_colors(d, assignment):
         # make color dict
         pallete = sns.color_palette("colorblind") * 10
         gRNA_color_dict = dict(zip(assignment["group"].unique(), pallete))
-        gRNA_color_dict[pd.np.nan] = "grey"
+        gRNA_color_dict["CTRL"] = "#228B22"
+        gRNA_color_dict["Essential"] = "#B22222"
+        gRNA_color_dict["Unassigned"] = "grey"
 
         # match colors with matrix
-        stimulation_colors = ["red" if "un" in x else "green" for x in d.columns]
+        stimulation_colors = ["#B22222" if "un" in x else "#228B22" for x in d.columns]
         cell_names = d.columns.str.lstrip("un|st")
         ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-        ass = [x if type(x) == str else pd.np.nan for x in ass]
+        ass = [x if type(x) == str else "Unassigned" for x in ass]
         gRNA_colors = [gRNA_color_dict[x] for x in ass]
 
+        # convert to rgb
+        stimulation_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in stimulation_colors]
+        gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
+
         return [stimulation_colors, gRNA_colors]
+
+    def get_group_colors(d, assignment):
+        # make color dict
+        pallete = sns.color_palette("colorblind") * 10
+        gRNA_color_dict = dict(zip(d.columns.levels[1], pallete))
+        gRNA_color_dict["CTRL"] = "#228B22"
+        gRNA_color_dict["Essential"] = "#B22222"
+        gRNA_color_dict["Unassigned"] = "grey"
+
+        # match colors with matrix
+        gRNA_colors = [gRNA_color_dict[x] for x in d.columns.get_level_values(1)]
+        stimulation_colors = ["#B22222" if "un" in x else "#228B22" for x in d.columns.get_level_values(0)]
+
+        # convert to rgb
+        stimulation_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in stimulation_colors]
+        gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
+
+        return [stimulation_colors, gRNA_colors]
+
+    def get_foldchange_colors(d, s):
+        fold_change_colors = ["#B22222" if x > 0 else "#333399" for x in s.ix[d.index]["fold_change"]]
+        return fold_change_colors
 
     # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
     df2 = df.ix[
@@ -228,7 +258,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
 
     g = sns.clustermap(
         df3, z_score=0,
-        col_colors=get_colors(df3, assignment),
+        col_colors=get_grna_colors(df3, assignment),
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
@@ -242,7 +272,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
 
     g = sns.clustermap(
         df4, z_score=1,
-        col_colors=get_colors(df4, assignment),
+        col_colors=get_grna_colors(df4, assignment),
         row_cluster=False, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
@@ -255,7 +285,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
 
     g = sns.clustermap(
         df4, z_score=0,
-        col_colors=get_colors(df4, assignment),
+        col_colors=get_grna_colors(df4, assignment),
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
@@ -268,17 +298,18 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     # sort by stimulation order and gRNA order
     cell_names = df3.columns.str.lstrip("un|st")
     ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else pd.np.nan for x in ass]
+    ass = [x if type(x) == str else "Unassigned" for x in ass]
     df3.loc["ass", :] = ass
     df3.loc["sti", :] = [x[:2] for x in df3.columns]
     order = df3.T[["sti", "ass"]].sort_values(["sti", "ass"]).index.tolist()
     df3 = df3.drop(["sti", "ass"])
+    df3 = df3.astype(np.float64)
 
-    df4 = df3[order].astype(float)
+    df4 = df3[order]
 
     g = sns.clustermap(
         df4, z_score=0,
-        col_colors=get_colors(df4, assignment),
+        col_colors=get_grna_colors(df4, assignment),
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
@@ -286,23 +317,39 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
 
-    # Group by stimulation / gRNA
-    # sort by stimulation order and gRNA order
-    cell_names = df3.columns.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else pd.np.nan for x in ass]
+    # Group by stimulation / gRNA, get mean expression
 
-    df4 = df3.T
+    # use all cells for this
+    df4 = df2.copy().T
+
+    cell_names = df4.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else "Unassigned" for x in ass]
+
     df4["ass"] = ass
     df4['ass'] = df4['ass'].astype("category")
     df4["sti"] = [x[:2] for x in df4.index]
     df4['sti'] = df4['sti'].astype("category")
 
-    df5 = df4.groupby(['sti', 'ass']).median().T
+    df5 = df4.groupby(['sti', 'ass']).mean().T
 
+    # report number of cells per condition & gRNA
+    fig, axis = plt.subplots(1, figsize=(6, 12))
+    c = df4.groupby(['sti', 'ass']).apply(len).sort_values(ascending=False)
+    sns.barplot(c, c.index.to_series().str.join(" "), orient="horiz", ax=axis)
+    axis.set_xscale('log')
+    axis.set_xlabel('Number of cells (log)')
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "differential_expression.{}.cell_number_per_group.svg".format(prefix)), bbox_inches="tight")
+
+    # Filter out genes with less than 10 cells
+    df5 = df5[c[c >= 10].index]
+
+    # cluster
     g = sns.clustermap(
-        df5,  # z_score=0,
-        # col_colors=get_colors(df5, assignment),
+        df5, z_score=0,
+        col_colors=get_group_colors(df5, assignment),
+        row_colors=get_foldchange_colors(df5, stats),
         row_cluster=True, col_cluster=True,
         xticklabels=True, yticklabels=True,
         figsize=(15, 15))
@@ -310,9 +357,178 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         item.set_rotation(0)
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # sort by stimulation order and gRNA order
+    g = sns.clustermap(
+        df5.T.sort_index().T,  # z_score=0,
+        col_colors=get_group_colors(df5.T.sort_index().T, assignment),
+        row_colors=get_foldchange_colors(df5, stats),
+        row_cluster=True, col_cluster=False,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
 
     #
+
+    # Dimentionality reduction methods
+    from sklearn.manifold import MDS, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE
+    from sklearn.decomposition import PCA
+
+    # Try several methods
+    methods = ["PCA", "LocallyLinearEmbedding", "Isomap", "SpectralEmbedding", "TSNE", "MDS"]
+
+    for name, matrix in [("groups", df5.T), ("cells", df3.T)]:
+        for method in methods:
+            print(name, method)
+            model = eval(method)()
+
+            if name == "cells":
+                color = get_grna_colors(matrix.T, assignment)
+                m = matrix.T[matrix.dtypes == np.float64].T
+            else:
+                color = get_group_colors(matrix.T, assignment)
+                m = matrix.T[matrix.dtypes == np.float64]
+
+            fit = model.fit_transform(m)
+
+            # plot
+            if method == "PCA":
+                pcs = 3
+            else:
+                pcs = 1
+
+            fig, axis = plt.subplots(2, pcs, sharex=True, sharey=True, figsize=(8, 10))
+            if method != "PCA":
+                axis = [[x] for x in axis]
+
+            for i, variable in enumerate(["condition", "gene"]):
+                for pc in range(pcs):
+                    axis[i][pc].scatter(fit[:, pc], fit[:, pc + 1], color=color[i], alpha=0.75 if name == "groups" else 0.1)
+                    axis[i][pc].set_xticklabels([])
+                    axis[i][pc].set_yticklabels([])
+                    if method == "PCA":
+                        axis[i][pc].set_xlabel("PC %i" % pc)
+                        axis[i][pc].set_ylabel("PC %i" % (pc + 1))
+                # axis[i][pc].legend(
+                #     handles=[mpatches.Patch(color=v, label=k) for k, v in color_mapping.items()],
+                #     ncol=2 if feature == "organ" else 1,
+                #     loc='center left',
+                #     bbox_to_anchor=(1, 0.5))
+
+            print("clustering.%s.%s.png" % (method, name))
+            fig.savefig(os.path.join(results_dir, "differential_expression.{}.{}.{}.png".format(prefix, name, method)), bbox_inches="tight", dpi=300)
+
+
+def enrich_signature(degs, prefix=""):
+    """
+    """
+    # load stats of diff genes
+    degs = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index_col=0)
+    degs.index.name = "gene_name"
+
+    for d, name in [(degs, "_all_genes"), (degs[degs["fold_change"] > 0], "_up_genes"), (degs[degs["fold_change"] < 0], "_down_genes")]:
+
+        enr = enrichr(d.reset_index())
+        enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(prefix + name)), index=False)
+
+        for gene_set_library in enr["gene_set_library"].unique():
+
+            p = enr[enr["gene_set_library"] == gene_set_library]
+            # p = p[p["adjusted_p_value"] < 0.05]
+
+            if p.shape[0] < 1:
+                continue
+
+            p = p.sort_values("combined_score").tail(25)
+
+            print(gene_set_library)
+            fig, axis = plt.subplots(1)
+            sns.barplot(p["combined_score"], p["description"], orient="horiz", ax=axis)
+            axis.set_xlabel("Combined score")
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "differential_expression.{}.enrichr.{}.svg".format(prefix + name, gene_set_library)), bbox_inches="tight")
+
+
+def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
+    """
+    Use Enrichr on a list of genes (currently only genes supported through the API).
+    """
+    import json
+    import requests
+
+    ENRICHR_ADD = 'http://amp.pharm.mssm.edu/Enrichr/addList'
+    ENRICHR_RETRIEVE = 'http://amp.pharm.mssm.edu/Enrichr/enrich'
+    query_string = '?userListId=%s&backgroundType=%s'
+
+    if gene_set_libraries is None:
+        gene_set_libraries = [
+            'GO_Biological_Process_2015',
+            'GO_Molecular_Function_2015',
+            'GO_Cellular_Component_2015',
+            "ChEA_2015",
+            "KEGG_2016",
+            "WikiPathways_2016",
+            "Reactome_2016",
+            "BioCarta_2016",
+            "Disease_Perturbations_from_GEO_down",
+            "Disease_Perturbations_from_GEO_up",
+            "TF-LOF_Expression_from_GEO"
+        ]
+
+    results = pd.DataFrame()
+    for gene_set_library in gene_set_libraries:
+        print("Using enricher on %s gene set library." % gene_set_library)
+
+        if kind == "genes":
+            # Build payload with bed file
+            attr = "\n".join(dataframe["gene_name"].dropna().tolist())
+        elif kind == "regions":
+            # Build payload with bed file
+            attr = "\n".join(dataframe[['chrom', 'start', 'end']].apply(lambda x: "\t".join([str(i) for i in x]), axis=1).tolist())
+
+        payload = {
+            'list': (None, attr),
+            'description': (None, gene_set_library)
+        }
+        # Request adding gene set
+        response = requests.post(ENRICHR_ADD, files=payload)
+        if not response.ok:
+            raise Exception('Error analyzing gene list')
+
+        # Track gene set ID
+        user_list_id = json.loads(response.text)['userListId']
+
+        # Request enriched sets in gene set
+        response = requests.get(
+            ENRICHR_RETRIEVE + query_string % (user_list_id, gene_set_library)
+        )
+        if not response.ok:
+            raise Exception('Error fetching enrichment results')
+
+        # Get enriched sets in gene set
+        res = json.loads(response.text)
+        # If there's no enrichemnt, continue
+        if len(res) < 0:
+            continue
+
+        # Put in dataframe
+        res = pd.DataFrame([pd.Series(s) for s in res[gene_set_library]])
+        if res.shape[0] == 0:
+            continue
+        res.columns = ["rank", "description", "p_value", "z_score", "combined_score", "genes", "adjusted_p_value"]
+
+        # Remember gene set library used
+        res["gene_set_library"] = gene_set_library
+
+        # Append to master dataframe
+        results = results.append(res, ignore_index=True)
+
+    return results
 
 
 def big_heatmap(x, assignment):
@@ -459,8 +675,25 @@ for n_genes in [500]:
         pos = matrix_norm[matrix_norm.columns[matrix_norm.columns.str.contains("st")].tolist()]
         neg = matrix_norm[matrix_norm.columns[matrix_norm.columns.str.contains("un")].tolist()]
 
-        stats = differential_genes(pos, neg, matrix_norm, assignment, prefix=experiment + "_stimulation.allcells")
-        stats = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix)), index_col=0)
+        prefix = experiment + "_stimulation.allcells"
+
+        s = os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix))
+        if not os.path.exists(s):
+            stats = differential_genes(pos, neg, matrix_norm, assignment, prefix=prefix)
+        else:
+            stats = pd.read_csv(s, index_col=0)
+
+        if not os.path.exists(os.path.join(results_dir, "differential_expression.{}.stimutation.png".format(prefix))):
+            plot_deg_stats(stats, prefix=prefix)
+
+        if not os.path.exists(os.path.join(results_dir, "differential_expression.{}.group_means.png".format(prefix))):
+            plot_deg_heatmaps(matrix_norm.to_dense(), assignment, stats, prefix=prefix)
+
+        if not os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(prefix + "_all_genes")):
+            enrich_signature(stats, prefix=prefix)
+
+
+
 
         # variant B:
         # only "CTRL" cells
