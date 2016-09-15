@@ -1,0 +1,9 @@
+sample_name,library,organism,cell_type,cell_clone,grna_library,condition,flowcell,lane,BSF_name,filename,data_source
+CROP-seq_HEK293T_1,Drop-seq,human,HEK293T,,,,BSF_0222_000000000-AMPDE,1,HEK293T_Cas9_S14170,,bsf_samples
+CROP-seq_HEK293T_1_resequenced,Drop-seq,human,HEK293T,,,,BSF_0225_H5W5LBBXX,6,CROPseq1_pool2_S14606,,bsf_samples
+CROP-seq_HEK293T_4_WNT_stimulated,Drop-seq,human,HEK293T,4,WNT,stimulated,,,,,
+CROP-seq_HEK293T_4_WNT_unstimulated,Drop-seq,human,HEK293T,4,WNT,unstimulated,,,,,
+CROP-seq_HEK293T_6_WNT_stimulated,Drop-seq,human,HEK293T,6,WNT,stimulated,,,,,
+CROP-seq_HEK293T_6_WNT_unstimulated,Drop-seq,human,HEK293T,6,WNT,unstimulated,,,,,
+CROP-seq_Jurkat_TCR_stimulated,Drop-seq,human,Jurkat,,TCR,stimulated,,,,,
+CROP-seq_Jurkat_TCR_unstimulated,Drop-seq,human,Jurkat,,TCR,unstimulated,,,,,
