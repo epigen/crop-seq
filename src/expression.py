@@ -1,14 +1,11 @@
 #!/usr/bin/env python
 
-import argparse
 import os
 import pandas as pd
-import pysam
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
-import re
 
 
 # Set settings
@@ -106,7 +103,7 @@ def unsupervised(df, prefix=""):
     fig.savefig(os.path.join(results_dir, "clustering.{}.png".format(prefix)), bbox_inches="tight")
 
 
-def differential_genes(pos, neg, df, assignment, prefix="", method="mannwhitney"):
+def differential_genes(pos, neg, assignment, prefix="", method="mannwhitney"):
     """
     """
     from scipy.stats import mannwhitneyu
@@ -130,7 +127,7 @@ def differential_genes(pos, neg, df, assignment, prefix="", method="mannwhitney"
         return
 
     print("Doing differnetial gene expression for experiment: '{}'".format(experiment))
-    print("Comparing expression of {} with {} cells in {} genes.".format(pos.shape[1], neg.shape[1], df.shape[0]))
+    print("Comparing expression of {} with {} cells in {} genes.".format(pos.shape[1], neg.shape[1], pos.shape[0]))
 
     pos["intercept"] = 0.1
     neg["intercept"] = 0.1
@@ -193,6 +190,9 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     from sklearn.manifold import MDS, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE
     from sklearn.decomposition import PCA
 
+    import sys
+    sys.setrecursionlimit(1500)
+
     def get_grna_colors(d, assignment):
         # make color dict
         pallete = sns.color_palette("colorblind") * 10
@@ -237,12 +237,19 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         return fold_change_colors
 
     # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
-    df2 = df.ix[
-        stats[
-            (stats["q_value"] < 0.05) &  # filter by p-value
-            (abs(stats["fold_change"]) > np.log2(1.5))  # filter by fold-change
-        ].sort_values("q_value").head(500).index.tolist()
-    ]
+    if "WNT" in prefix:
+        df2 = df.ix[
+            stats[
+                (stats["q_value"] < 0.05)  # filter by p-value
+            ].sort_values("q_value").head(500).index.tolist()
+        ]
+    else:
+        df2 = df.ix[
+            stats[
+                (stats["q_value"] < 0.05) &  # filter by p-value
+                (abs(stats["fold_change"]) > np.log2(1.5))  # filter by fold-change
+            ].sort_values("q_value").head(500).index.tolist()
+        ]
     # save stats of diff genes
     stats.ix[df2.index.tolist()].to_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index=True)
 
@@ -253,19 +260,23 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     ]
 
     # remove opposite gRNA library
-    if "TCR" in experiment:
+    if "TCR" in prefix:
         assignment = assignment[~assignment['assignment'].str.contains("Wnt")]
-    elif "WNT" in experiment:
+    elif "WNT" in prefix:
         assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
 
     g = sns.clustermap(
         df3, z_score=0,
         col_colors=get_grna_colors(df3, assignment),
+        row_colors=get_foldchange_colors(df3, stats),
+        robust=True,
+        metric='correlation',
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.svg".format(prefix)), bbox_inches="tight")
 
     # sort rows by fold change, columns by stimulation
     df4 = df3.ix[stats['fold_change'].sort_values().index].dropna()
@@ -275,12 +286,16 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     g = sns.clustermap(
         df4, z_score=1,
         col_colors=get_grna_colors(df4, assignment),
+        row_colors=get_foldchange_colors(df4, stats),
+        robust=True,
+        metric='correlation',
         row_cluster=False, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sorted_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sorted_heatmap.svg".format(prefix)), bbox_inches="tight")
 
     # sort by stimulation order
     df4 = df3.sort_index(axis=1)
@@ -288,12 +303,16 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     g = sns.clustermap(
         df4, z_score=0,
         col_colors=get_grna_colors(df4, assignment),
+        row_colors=get_foldchange_colors(df4, stats),
+        robust=True,
+        metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedcondition_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedcondition_heatmap.svg".format(prefix)), bbox_inches="tight")
 
     #
 
@@ -311,13 +330,18 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
 
     g = sns.clustermap(
         df4, z_score=0,
+        # center=np.log2(df4.mean().mean()),
         col_colors=get_grna_colors(df4, assignment),
+        row_colors=get_foldchange_colors(df4, stats),
+        # robust=True,
+        metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.svg".format(prefix)), bbox_inches="tight")
 
     #
 
@@ -355,6 +379,8 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         df5, z_score=0,
         col_colors=get_group_colors(df5, assignment),
         row_colors=get_foldchange_colors(df5, stats),
+        robust=True,
+        metric='correlation',
         row_cluster=True, col_cluster=True,
         xticklabels=True, yticklabels=True,
         figsize=(15, 15))
@@ -363,31 +389,35 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.svg".format(prefix)), bbox_inches="tight")
 
     # sort by stimulation order and gRNA order
     g = sns.clustermap(
-        df5.T.sort_index().T,  # z_score=0,
+        df5.T.sort_index().T, z_score=0,
         col_colors=get_group_colors(df5.T.sort_index().T, assignment),
         row_colors=get_foldchange_colors(df5, stats),
         row_cluster=True, col_cluster=False,
         xticklabels=True, yticklabels=True,
+        robust=True,
+        metric='correlation',
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sortedconditiongRNA_heatmap.svg".format(prefix)), bbox_inches="tight")
 
     #
 
     # Dimentionality reduction methods
     # try several
-    methods = ["PCA", "LocallyLinearEmbedding", "Isomap", "SpectralEmbedding", "TSNE", "MDS"]
+    methods = [PCA, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE, MDS]
 
     for name, matrix in [("groups", df5.T), ("cells", df3.T)]:
         for method in methods:
-            print(name, method)
-            model = eval(method)()
+            print(name, method.__name__)
+            model = method()
 
             if name == "cells":
                 color = get_grna_colors(matrix.T, assignment)
@@ -399,13 +429,13 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
             fit = model.fit_transform(m)
 
             # plot
-            if method == "PCA":
+            if method.__name__ == "PCA":
                 pcs = 3
             else:
                 pcs = 1
 
-            fig, axis = plt.subplots(2, pcs, sharex=True, sharey=True, figsize=(8, 10))
-            if method != "PCA":
+            fig, axis = plt.subplots(2, pcs, sharex=False, sharey=False, figsize=(8, 10))
+            if method.__name__ != "PCA":
                 axis = [[x] for x in axis]
 
             for i, variable in enumerate(["condition", "gene"]):
@@ -413,7 +443,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
                     axis[i][pc].scatter(fit[:, pc], fit[:, pc + 1], color=color[i], alpha=0.75 if name == "groups" else 0.1)
                     axis[i][pc].set_xticklabels([])
                     axis[i][pc].set_yticklabels([])
-                    if method == "PCA":
+                    if method.__name__ == "PCA":
                         axis[i][pc].set_xlabel("PC %i" % pc)
                         axis[i][pc].set_ylabel("PC %i" % (pc + 1))
                 # axis[i][pc].legend(
@@ -421,7 +451,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
                 #     ncol=2 if feature == "organ" else 1,
                 #     loc='center left',
                 #     bbox_to_anchor=(1, 0.5))
-            fig.savefig(os.path.join(results_dir, "differential_expression.{}.{}.{}.png".format(prefix, name, method)), bbox_inches="tight", dpi=300)
+            fig.savefig(os.path.join(results_dir, "differential_expression.{}.{}.{}.png".format(prefix, name, method.__name__)), bbox_inches="tight", dpi=300)
 
 
 def enrich_signature(degs, prefix=""):
@@ -434,7 +464,7 @@ def enrich_signature(degs, prefix=""):
     for d, name in [(degs, "_all_genes"), (degs[degs["fold_change"] > 0], "_up_genes"), (degs[degs["fold_change"] < 0], "_down_genes")]:
 
         enr = enrichr(d.reset_index())
-        enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(prefix + name)), index=False)
+        enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(prefix + name)), index=False, encoding="utf8")
 
         for gene_set_library in enr["gene_set_library"].unique():
 
@@ -463,27 +493,23 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
         header=[0, 1], skipinitialspace=True, tupleize_cols=True)
     group_means.columns = pd.MultiIndex.from_tuples(group_means.columns)
 
-    # Get trait-specific signature
-    # 1. get median accessibility of each group
+    # Get stimulation signature
+    # 1. get mean expression of each group in signature gens
     x1 = group_means["st", "CTRL"]
     x2 = group_means["un", "CTRL"]
 
     # 2. get signature matrix
     # here, bounds are set to (-20, 20) so that the extremes of the signature represent -20% or 120% of the signature
-    # this is done because the extreme values (0 and 100%) values correspond to the median value within each group,
-    # meaning that some samples are expected to surpass those values.
+    # this is done because the extreme values (0 and 100%) values correspond to the mean value within each group,
+    # meaning that some cells are expected to surpass those values.
     sign = generate_signature_matrix(np.vstack([x1, x2]).T, n=101, bounds=(-20, 20))
 
-    # 3. get signature value of each patient
-    # x[[s.name for s in samples]].apply(best_signature_matrix, matrix=sign, axis=1)
+    # 3. get signature value of each cell
     sigs = list()
     for i, cell in enumerate(df.columns):
         if i % 20 == 0:
             print(i)
         sigs.append(best_signature_matrix(array=df.ix[group_means.index][cell], matrix=sign))
-
-    # Save clinical trait signatures for all samples
-    sigs.to_csv(os.path.join(results_dir, "signatures.all_cells.{}.csv".format(prefix)))
 
     # Aggregate by condition/gene
     df2 = df.copy().T
@@ -498,10 +524,13 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     df2['sti'] = df2['sti'].astype("category")
 
     # add signatures
-    df2['signature'] = pd.Series(sigs).astype(np.int64)
+    df2['signature'] = sigs
+
+    # Save clinical trait signatures for all samples
+    df2[["ass", "sti", "signature"]].to_csv(os.path.join(results_dir, "signatures.all_cells.{}.csv".format(prefix)))
 
     # plot distibution
-    sigs_mean = df2.groupby(['sti', 'ass'])['signatures'].mean().sort_values()
+    sigs_mean = df2.groupby(['sti', 'ass'])['signature'].mean().sort_values()
 
     fig, axis = plt.subplots(1, figsize=(10, 8))
     sns.stripplot(x=sigs_mean, y=sigs_mean.index, orient="horiz", ax=axis)
@@ -517,12 +546,12 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
 
     # plot as violinplots (values per cell)
     fig, axis = plt.subplots(1, figsize=(16, 8))
-    sns.violinplot(x="sti", y="signatures", hue="ass", data=df2, ax=axis)
+    sns.violinplot(x="sti", y="signature", hue="ass", data=df2, ax=axis)
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot.svg".format(prefix)), bbox_inches="tight")
 
     fig, axis = plt.subplots(1, figsize=(16, 8))
-    sns.violinplot(x="ass", y="signatures", hue="sti", data=df2, ax=axis)
+    sns.violinplot(x="ass", y="signature", hue="sti", data=df2, ax=axis)
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot2.svg".format(prefix)), bbox_inches="tight")
 
@@ -830,7 +859,7 @@ for n_genes in [500]:
 
         s = os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix))
         if not os.path.exists(s):
-            stats = differential_genes(pos, neg, matrix_norm, assignment, prefix=prefix)
+            stats = differential_genes(pos, neg, assignment, prefix=prefix)
         else:
             stats = pd.read_csv(s, index_col=0)
 
@@ -843,8 +872,7 @@ for n_genes in [500]:
         if not os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(prefix + "_all_genes")):
             enrich_signature(stats, prefix=prefix)
 
-
-
+        assign_cells_to_signature(stats, matrix_norm.to_dense(), assignment, prefix=prefix)
 
         # variant B:
         # only "CTRL" cells
