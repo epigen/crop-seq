@@ -750,6 +750,109 @@ def explore_knockouts(df, assignment, prefix=""):
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "knockout_combination..{}.mean_expression.own_knockouts.RUNX1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
 
+    #
+
+    # All differential genes
+    # load all files, select top N significant, append to list
+    n = 50
+    genes = list()
+    for gene in assignment["group"].unique():
+        try:
+            t = pd.read_csv(os.path.join(results_dir, "differential_expression.{}_onevsctrl.{}.stimutation.csv".format(experiment, gene)))
+        except:
+            print("Gene {}".format(gene))
+            continue
+        genes += t.ix[abs(t[t["q_value"] < 0.05]["fold_change"]).sort_values().tail(n).index]["gene"].tolist()
+    genes = pd.Series(genes).drop_duplicates()
+
+    p = group_means.ix[genes]
+    g = sns.clustermap(
+        p,
+        robust=True,
+        col_colors=get_group_colors(p, assignment),
+        metric='correlation',
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.png".format(prefix)), bbox_inches="tight", dpi=300)
+    # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.svg".format(prefix)), bbox_inches="tight")
+
+    g = sns.clustermap(
+        p,
+        z_score=0,
+        robust=True,
+        col_colors=get_group_colors(p, assignment),
+        metric='correlation',
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.z_score.png".format(prefix)), bbox_inches="tight", dpi=300)
+    # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.z_score.svg".format(prefix)), bbox_inches="tight")
+
+    g = sns.clustermap(
+        p[p.sum(0).sort_values().index],
+        z_score=0,
+        robust=True,
+        col_colors=get_group_colors(p, assignment),
+        metric='correlation',
+        row_cluster=True, col_cluster=False,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.sorted.png".format(prefix)), bbox_inches="tight", dpi=300)
+    # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.z_score.svg".format(prefix)), bbox_inches="tight")
+
+    # load each files, select top X significant, append to list
+    enrichments = pd.DataFrame()
+    for gene in assignment["group"].unique():
+        try:
+            t = pd.read_csv(os.path.join(results_dir, "differential_expression.{}_onevsctrl.{}.stimutation.csv".format(experiment, gene)))
+        except:
+            print("Gene {}".format(gene))
+            continue
+        print(gene)
+        d = t[t["q_value"] < 0.05].rename(columns={"gene": "gene_name"})
+        if d.shape[0] < 4:
+            continue
+        enr = enrichr(d)
+        enr["knockout_gene"] = gene
+
+        enrichments = enrichments.append(enr)
+    enrichments.to_csv(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)), index=False, encoding="utf8")
+
+    for gene_set_library in enrichments["gene_set_library"].unique():
+
+        d = enrichments[enrichments["gene_set_library"] == gene_set_library]
+
+        d_ = pd.pivot_table(d, index="description", columns="knockout_gene", values="combined_score")
+
+        # select terms enriched in most knockouts
+        g = sns.clustermap(
+            # d_.ix[d_.mean(1).sort_values().tail(35).index].fillna(0),
+            d_.ix[(np.nanstd(d_, 1) / d_.sum(1)).sort_values().tail(35).index].fillna(0),
+            # z_score=0,
+            robust=True,
+            row_cluster=True, col_cluster=True,
+            xticklabels=True, yticklabels=True,
+            figsize=(15, 15))
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.{}.png".format(prefix, gene_set_library)), bbox_inches="tight", dpi=300)
+        # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)), bbox_inches="tight")
+
 
 def get_grna_colors(d, assignment):
     from matplotlib.colors import colorConverter
