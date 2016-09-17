@@ -648,6 +648,109 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature_deviation.ranklog2.scatter.svg".format(prefix)), bbox_inches="tight")
 
 
+def explore_knockouts(df, assignment, prefix=""):
+    """
+    """
+    df = df.T
+
+    # Annotate cells with stimulus and gRNA assignment
+    cell_names = df.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+
+    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
+    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
+
+    df2 = df[~df["ass"].isin(["Unassigned", "Essential"])]
+
+    # get condition/gene mean expression for every gene
+    group_means = df2.groupby(["sti", "ass"]).mean().dropna().T
+    group_means.to_csv(os.path.join(results_dir, "knockout_combination.mean_expression.{}.csv".format(prefix)))
+
+    # filter for groups with more than n cells
+    c = df2.groupby(["sti", "ass"]).apply(len)
+    group_means = group_means[c[c >= np.percentile(c, 5)].index]
+
+    p = group_means.ix[[x for x in group_means.columns.levels[1].tolist() if x in group_means.index]]
+    g = sns.clustermap(
+        p,
+        robust=True,
+        col_colors=get_group_colors(p, assignment),
+        metric='correlation',
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.svg".format(prefix)), bbox_inches="tight")
+
+    g = sns.clustermap(
+        p,
+        z_score=0,
+        robust=True,
+        col_colors=get_group_colors(p, assignment),
+        metric='correlation',
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.z_score.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.z_score.svg".format(prefix)), bbox_inches="tight")
+
+    # Compare difference between conditions
+    group_differences = (group_means["st"] - group_means["un"])
+    group_differences = group_differences[group_differences.isnull().all()[~group_differences.isnull().all()].index]
+
+    p = group_differences.ix[[x for x in group_differences.columns.tolist() if x in group_differences.index]]
+    g = sns.clustermap(
+        p,
+        robust=True,
+        metric='correlation',
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.svg".format(prefix)), bbox_inches="tight")
+
+    g = sns.clustermap(
+        p,
+        z_score=0,
+        robust=True,
+        metric='correlation',
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.z_score.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.z_score.svg".format(prefix)), bbox_inches="tight")
+
+    # Swarmplots of GATA3, RUNX1, ETS1, EGR1 expression in the two conditions
+    fig, axis = plt.subplots(2, figsize=(14, 8))
+    sns.violinplot(x="sti", y="GATA3", data=df2, hue="ass")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "knockout_combination..{}.mean_expression.own_knockouts.GATA3_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
+    fig, axis = plt.subplots(2, figsize=(14, 8))
+    sns.violinplot(x="sti", y="ETS1", data=df2, hue="ass")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "knockout_combination..{}.mean_expression.own_knockouts.ETS1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
+    fig, axis = plt.subplots(2, figsize=(14, 8))
+    sns.violinplot(x="sti", y="RUNX1", data=df2, hue="ass")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "knockout_combination..{}.mean_expression.own_knockouts.RUNX1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
+
+
 def get_grna_colors(d, assignment):
     from matplotlib.colors import colorConverter
     # make color dict
@@ -989,6 +1092,55 @@ for n_genes in [500]:
         # a) control cells; b) all cells; - intersect (or max) the differential genes from either,
         # explore signature enrichment
 
+        # Aggregate by condition/gene
+        # use all cells for this
+        for condition in ["st", "un"]:
+            for gene in assignment[assignment['experiment_group'] == experiment]["group"].unique():
+                if gene in ["Essential", "CTRL"]:
+                    continue
+
+                # select condition
+                mc = matrix_norm[matrix_norm.columns[matrix_norm.columns.str.contains(condition)].tolist()].to_dense()
+
+                # select cells from this gene
+                cell_names = mc.T.index.str.lstrip("un|st")
+                ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+                ass = [x if type(x) == str else "Unassigned" for x in ass]
+
+                indices = [i for i, x in enumerate(ass) if x == gene]
+                pos = mc.icol(indices)
+
+                # get all other cells
+                indices = [i for i, x in enumerate(ass) if x != gene]
+                neg = mc.icol(indices)
+
+                prefix = experiment + "_onevsall.{}".format(gene)
+
+                s = os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix))
+                if not os.path.exists(s):
+                    stats = differential_genes(pos, neg, assignment, prefix=prefix)
+                # else:
+                #     stats = pd.read_csv(s, index_col=0)
+
         # Approach 2:
         # get MSigDB/GEO signatures on these stimuli
         # use them to quantify the deviation of each group of cell with gRNA targeting the same gene
+
+        #
+
+        # Part 2.
+        # Explore the knockouts!
+
+        #
+
+        # A.
+        # Groupby condition/gene, get mean expression
+        # Plot difference/deviation from CTRL for genes:
+        # a) of the relevant pathway or
+        # b) any differentially expressed gene from the one vs all or one vs CTRL comparisons.
+        explore_knockouts(matrix_norm.to_dense(), assignment, prefix=prefix)
+        # Plot the difference between stimulated/unstimulated for same genes
+
+        # B.
+        # Get enrichments for all DEGs from the one vs all or one vs CTRL comparisons.
+        # Plot knockout vs enrichment
