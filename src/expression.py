@@ -222,16 +222,34 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
 
     g = sns.clustermap(
-        df3, z_score=0,
+        df3,
+        standard_scale=0,
+        cmap="YlGn",
         col_colors=get_grna_colors(df3, assignment),
         row_colors=get_foldchange_colors(df3, stats),
         metric='correlation',
-        xticklabels=False, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
+        xticklabels=False, yticklabels=False,
+        figsize=(15, 7))
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.png".format(prefix)), bbox_inches="tight", dpi=300)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.svg".format(prefix)), bbox_inches="tight")
+
+    # only assigned cells
+    cell_names = df3.columns.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else "Unassigned" for x in ass]
+    c = [i for i, x in enumerate(ass) if x not in ["Unassigned"]]
+
+    g = sns.clustermap(
+        df3[c],
+        standard_scale=0,
+        cmap="YlGn",
+        col_colors=get_grna_colors(df3[c], assignment),
+        row_colors=get_foldchange_colors(df3[c], stats),
+        metric='correlation',
+        xticklabels=False, yticklabels=False,
+        figsize=(15, 7))
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.only_assigned.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.only_assigned.svg".format(prefix)), bbox_inches="tight")
 
     # sort rows by fold change, columns by stimulation
     df4 = df3.ix[stats['fold_change'].sort_values().index].dropna()
@@ -239,13 +257,15 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     df4 = df4.T.sort_values(df4.index.tolist(), ascending=False).T
 
     g = sns.clustermap(
-        df4, z_score=1,
+        df4,
+        standard_scale=0,
+        cmap="YlGn",
         col_colors=get_grna_colors(df4, assignment),
         row_colors=get_foldchange_colors(df4, stats),
         metric='correlation',
         row_cluster=False, col_cluster=False,
         xticklabels=False, yticklabels=True,
-        figsize=(15, 15))
+        figsize=(15, 7))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sorted_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
@@ -255,13 +275,15 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     df4 = df3.sort_index(axis=1)
 
     g = sns.clustermap(
-        df4, z_score=0,
+        df4,
+        standard_scale=0,
+        cmap="YlGn",
         col_colors=get_grna_colors(df4, assignment),
         row_colors=get_foldchange_colors(df4, stats),
         metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
-        figsize=(15, 15))
+        figsize=(15, 7))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedcondition_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
@@ -282,7 +304,9 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     df4 = df3[order]
 
     g = sns.clustermap(
-        df4, z_score=0,
+        df4,
+        standard_scale=0,
+        cmap="YlGn",
         # center=np.log2(df4.mean().mean()),
         col_colors=get_grna_colors(df4, assignment),
         row_colors=get_foldchange_colors(df4, stats),
@@ -290,7 +314,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
-        figsize=(15, 15))
+        figsize=(15, 7))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
@@ -550,6 +574,7 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     df5["signature"] = sigs_mean
     df5["n_cells"] = df4.groupby(['sti', 'ass']).apply(len).sort_values(ascending=False)
     df5.to_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index=True)
+    df5 = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index_col=[0,1], skipinitialspace=True)
 
     # Filter out genes with less than the 5th percentile of cells
     df5 = df5[df5["n_cells"] >= np.percentile(df5['n_cells'], 5)]
@@ -575,7 +600,7 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     p = df5.sort_values("signature").T.drop(['signature', 'n_cells'])
     p = p[[i for i, x in enumerate(p.columns.get_level_values(1)) if x not in ["Essential", "Unassigned"]]]
     g = sns.clustermap(
-        p, z_score=0,
+        p, standard_scale=0,
         col_colors=get_group_colors(p, assignment),
         row_colors=get_foldchange_colors(p, stats),
         metric='correlation',
@@ -596,6 +621,7 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     fig, axis = plt.subplots(1, figsize=(8, 8))
     axis.scatter([1] * p.shape[1], range(p.shape[1]), s=p.ix['n_cells'])
     [axis.text(1.0005, i, s=str(int(x))) for i, x in enumerate(p.ix['n_cells'].values)]
+    [axis.text(1.002, i, s=str(x)) for i, x in enumerate(p.columns.get_level_values(1))]
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.cells_per_group.bubbles.svg".format(prefix)), bbox_inches="tight")
 
@@ -1076,7 +1102,7 @@ def big_heatmap(x, assignment):
     return fig
 
 
-root_dir = "/scratch/lab_bock/shared/projects/crop-seq"
+root_dir = "."
 results_dir = os.path.join(root_dir, "results")
 sample_annotation = pd.read_csv(os.path.join(root_dir, "metadata/annotation.csv"))
 
