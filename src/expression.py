@@ -186,55 +186,11 @@ def plot_deg_stats(stats, prefix=""):
 def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     """
     """
-    from matplotlib.colors import colorConverter
     from sklearn.manifold import MDS, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE
     from sklearn.decomposition import PCA
 
     import sys
     sys.setrecursionlimit(1500)
-
-    def get_grna_colors(d, assignment):
-        # make color dict
-        pallete = sns.color_palette("colorblind") * 10
-        gRNA_color_dict = dict(zip(assignment["group"].unique(), pallete))
-        gRNA_color_dict["CTRL"] = "#228B22"
-        gRNA_color_dict["Essential"] = "#B22222"
-        gRNA_color_dict["Unassigned"] = "grey"
-
-        # match colors with matrix
-        stimulation_colors = ["#B22222" if "un" in x else "#228B22" for x in d.columns]
-        cell_names = d.columns.str.lstrip("un|st")
-        ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-        ass = [x if type(x) == str else "Unassigned" for x in ass]
-        gRNA_colors = [gRNA_color_dict[x] for x in ass]
-
-        # convert to rgb
-        stimulation_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in stimulation_colors]
-        gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
-
-        return [stimulation_colors, gRNA_colors]
-
-    def get_group_colors(d, assignment):
-        # make color dict
-        pallete = sns.color_palette("colorblind") * 10
-        gRNA_color_dict = dict(zip(d.columns.levels[1], pallete))
-        gRNA_color_dict["CTRL"] = "#228B22"
-        gRNA_color_dict["Essential"] = "#B22222"
-        gRNA_color_dict["Unassigned"] = "grey"
-
-        # match colors with matrix
-        gRNA_colors = [gRNA_color_dict[x] for x in d.columns.get_level_values(1)]
-        stimulation_colors = ["#B22222" if "un" in x else "#228B22" for x in d.columns.get_level_values(0)]
-
-        # convert to rgb
-        stimulation_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in stimulation_colors]
-        gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
-
-        return [stimulation_colors, gRNA_colors]
-
-    def get_foldchange_colors(d, s):
-        fold_change_colors = ["#B22222" if x > 0 else "#333399" for x in s.ix[d.index]["fold_change"]]
-        return fold_change_colors
 
     # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
     if "WNT" in prefix:
@@ -269,7 +225,6 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         df3, z_score=0,
         col_colors=get_grna_colors(df3, assignment),
         row_colors=get_foldchange_colors(df3, stats),
-        robust=True,
         metric='correlation',
         xticklabels=False, yticklabels=True,
         figsize=(15, 15))
@@ -287,7 +242,6 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         df4, z_score=1,
         col_colors=get_grna_colors(df4, assignment),
         row_colors=get_foldchange_colors(df4, stats),
-        robust=True,
         metric='correlation',
         row_cluster=False, col_cluster=False,
         xticklabels=False, yticklabels=True,
@@ -304,7 +258,6 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         df4, z_score=0,
         col_colors=get_grna_colors(df4, assignment),
         row_colors=get_foldchange_colors(df4, stats),
-        robust=True,
         metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
@@ -379,7 +332,6 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         df5, z_score=0,
         col_colors=get_group_colors(df5, assignment),
         row_colors=get_foldchange_colors(df5, stats),
-        robust=True,
         metric='correlation',
         row_cluster=True, col_cluster=True,
         xticklabels=True, yticklabels=True,
@@ -398,7 +350,6 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         row_colors=get_foldchange_colors(df5, stats),
         row_cluster=True, col_cluster=False,
         xticklabels=True, yticklabels=True,
-        robust=True,
         metric='correlation',
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
@@ -528,9 +479,10 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
 
     # Save clinical trait signatures for all samples
     df2[["ass", "sti", "signature"]].to_csv(os.path.join(results_dir, "signatures.all_cells.{}.csv".format(prefix)))
+    df2 = pd.read_csv(os.path.join(results_dir, "signatures.all_cells.{}.csv".format(prefix)), index_col=0)
 
     # plot distibution
-    sigs_mean = df2.groupby(['sti', 'ass'])['signature'].mean().sort_values()
+    sigs_mean = df2.groupby(['sti', 'ass'])['signature'].median().sort_values()
 
     fig, axis = plt.subplots(1, figsize=(10, 8))
     sns.stripplot(x=sigs_mean, y=sigs_mean.index, orient="horiz", ax=axis)
@@ -545,15 +497,109 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.rank.svg".format(prefix)), bbox_inches="tight")
 
     # plot as violinplots (values per cell)
+    p = df2.reset_index().sort_values(['signature'])
+    p = p[(p["ass"] != "Essential") & (p["ass"] != "Unassigned")]
+
     fig, axis = plt.subplots(1, figsize=(16, 8))
-    sns.violinplot(x="sti", y="signature", hue="ass", data=df2, ax=axis)
+    sns.violinplot(
+        x="sti", y="signature", hue="ass",
+        data=p,
+        cut=0,
+        order=["st", "un"],
+        hue_order=sigs_mean.reset_index().sort_values(["signature"], ascending=False)['ass'].drop_duplicates(),
+        ax=axis)
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot.svg".format(prefix)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot.sorted_st.svg".format(prefix)), bbox_inches="tight")
+
+    fig, axis = plt.subplots(1, figsize=(16, 8))
+    sns.violinplot(
+        x="sti", y="signature", hue="ass",
+        data=p,
+        cut=0,
+        order=["st", "un"],
+        hue_order=sigs_mean.reset_index().sort_values(["signature"])['ass'].drop_duplicates(),
+        ax=axis)
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot.sorted_un.svg".format(prefix)), bbox_inches="tight")
 
     fig, axis = plt.subplots(1, figsize=(16, 8))
     sns.violinplot(x="ass", y="signature", hue="sti", data=df2, ax=axis)
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot2.svg".format(prefix)), bbox_inches="tight")
+
+    # Make heatmap sorted by median signature position per knockout
+
+    # Group by stimulation / gRNA, get mean expression
+
+    # use all cells for this
+    diffs = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index_col=0)
+    df4 = df.copy().T[diffs.index]
+
+    cell_names = df4.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else "Unassigned" for x in ass]
+
+    df4["ass"] = ass
+    df4['ass'] = df4['ass'].astype("category")
+    df4["sti"] = [x[:2] for x in df4.index]
+    df4['sti'] = df4['sti'].astype("category")
+
+    df5 = df4.groupby(['sti', 'ass']).mean()
+
+    # Annotate with median signature and number of cells and save
+    df5["signature"] = sigs_mean
+    df5["n_cells"] = df4.groupby(['sti', 'ass']).apply(len).sort_values(ascending=False)
+    df5.to_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index=True)
+
+    # Filter out genes with less than the 5th percentile of cells
+    df5 = df5[df5["n_cells"] >= np.percentile(df5['n_cells'], 5)]
+    df5 = df5[df5["n_cells"] >= 10]
+
+    # cluster
+    g = sns.clustermap(
+        df5.T.drop(['signature', 'n_cells']), z_score=0,
+        col_colors=get_group_colors(df5.T, assignment),
+        row_colors=get_foldchange_colors(df5.T, stats),
+        metric='correlation',
+        row_cluster=True, col_cluster=True,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.svg".format(prefix)), bbox_inches="tight")
+
+    # sort by signature
+    p = df5.sort_values("signature").T.drop(['signature', 'n_cells'])
+    p = p[[i for i, x in enumerate(p.columns.get_level_values(1)) if x not in ["Essential", "Unassigned"]]]
+    g = sns.clustermap(
+        p, z_score=0,
+        col_colors=get_group_colors(p, assignment),
+        row_colors=get_foldchange_colors(p, stats),
+        metric='correlation',
+        row_cluster=True, col_cluster=False,
+        xticklabels=True, yticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sorted_signature.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sorted_signature.svg".format(prefix)), bbox_inches="tight")
+
+    # Strip plot of number of cells
+    p = df5.sort_values("signature").T.drop(['signature'])
+    p = p[[i for i, x in enumerate(p.columns.get_level_values(1)) if x not in ["Essential", "Unassigned"]]]
+
+    fig, axis = plt.subplots(1, figsize=(8, 8))
+    axis.scatter([1] * p.shape[1], range(p.shape[1]), s=p.ix['n_cells'])
+    [axis.text(1.0005, i, s=str(int(x))) for i, x in enumerate(p.ix['n_cells'].values)]
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.cells_per_group.bubbles.svg".format(prefix)), bbox_inches="tight")
+
+    #
 
     # Calculate deviation from CTRL for each stimulation
     s = (sigs_mean.ix['st'] - sigs_mean.ix['st', "CTRL"]).sort_values(ascending=False)
@@ -600,6 +646,54 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     axis[1].set_title("Unstimulated")
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature_deviation.ranklog2.scatter.svg".format(prefix)), bbox_inches="tight")
+
+
+def get_grna_colors(d, assignment):
+    from matplotlib.colors import colorConverter
+    # make color dict
+    pallete = sns.color_palette("colorblind") * 10
+    gRNA_color_dict = dict(zip(assignment["group"].unique(), pallete))
+    gRNA_color_dict["CTRL"] = "#228B22"
+    gRNA_color_dict["Essential"] = "#B22222"
+    gRNA_color_dict["Unassigned"] = "grey"
+
+    # match colors with matrix
+    stimulation_colors = ["#B22222" if "un" in x else "#228B22" for x in d.columns]
+    cell_names = d.columns.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else "Unassigned" for x in ass]
+    gRNA_colors = [gRNA_color_dict[x] for x in ass]
+
+    # convert to rgb
+    stimulation_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in stimulation_colors]
+    gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
+
+    return [stimulation_colors, gRNA_colors]
+
+
+def get_group_colors(d, assignment):
+    from matplotlib.colors import colorConverter
+    # make color dict
+    pallete = sns.color_palette("colorblind") * 10
+    gRNA_color_dict = dict(zip(d.columns.levels[1], pallete))
+    gRNA_color_dict["CTRL"] = "#228B22"
+    gRNA_color_dict["Essential"] = "#B22222"
+    gRNA_color_dict["Unassigned"] = "grey"
+
+    # match colors with matrix
+    gRNA_colors = [gRNA_color_dict[x] for x in d.columns.get_level_values(1)]
+    stimulation_colors = ["#B22222" if "un" in x else "#228B22" for x in d.columns.get_level_values(0)]
+
+    # convert to rgb
+    stimulation_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in stimulation_colors]
+    gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
+
+    return [stimulation_colors, gRNA_colors]
+
+
+def get_foldchange_colors(d, s):
+    fold_change_colors = ["#B22222" if x > 0 else "#333399" for x in s.ix[d.index]["fold_change"]]
+    return fold_change_colors
 
 
 def generate_signature_matrix(array, n=101, bounds=(0, 0)):
