@@ -251,26 +251,6 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.only_assigned.png".format(prefix)), bbox_inches="tight", dpi=300)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.only_assigned.svg".format(prefix)), bbox_inches="tight")
 
-    # sort rows by fold change, columns by stimulation
-    df4 = df3.ix[stats['fold_change'].sort_values().index].dropna()
-    df4 = df4[df4.columns[df4.sum() != 0]]
-    df4 = df4.T.sort_values(df4.index.tolist(), ascending=False).T
-
-    g = sns.clustermap(
-        df4,
-        standard_scale=0,
-        cmap="YlGn",
-        col_colors=get_grna_colors(df4, assignment),
-        row_colors=get_foldchange_colors(df4, stats),
-        metric='correlation',
-        row_cluster=False, col_cluster=False,
-        xticklabels=False, yticklabels=True,
-        figsize=(15, 7))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sorted_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sorted_heatmap.svg".format(prefix)), bbox_inches="tight")
-
     # sort by stimulation order
     df4 = df3.sort_index(axis=1)
 
@@ -311,6 +291,27 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
         col_colors=get_grna_colors(df4, assignment),
         row_colors=get_foldchange_colors(df4, stats),
         # robust=True,
+        metric='correlation',
+        row_cluster=True, col_cluster=False,
+        xticklabels=False, yticklabels=True,
+        figsize=(15, 7))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.svg".format(prefix)), bbox_inches="tight")
+
+    # sorted the same but only assigned cells
+    cell_names = df4.columns.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    ass = [x if type(x) == str else "Unassigned" for x in ass]
+    c = [i for i, x in enumerate(ass) if x not in ["Unassigned"]]
+
+    g = sns.clustermap(
+        df4[c],
+        standard_scale=0,
+        cmap="YlGn",
+        col_colors=get_grna_colors(df4[c], assignment),
+        row_colors=get_foldchange_colors(df4[c], stats),
         metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
@@ -491,12 +492,11 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     # use all cells for this
     cell_names = df2.index.str.lstrip("un|st")
     ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else "Unassigned" for x in ass]
 
-    df2["ass"] = ass
-    df2['ass'] = df2['ass'].astype("category")
-    df2["sti"] = [x[:2] for x in df2.index]
-    df2['sti'] = df2['sti'].astype("category")
+    df2["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df2.index).astype("category")
+    df2["sti"] = pd.Series([x[:2] for x in df2.index], index=df2.index).astype("category")
+
+    df2 = df2[~df2["ass"].isin(["Unassigned", "Essential"])]
 
     # add signatures
     df2['signature'] = sigs
@@ -561,12 +561,11 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
 
     cell_names = df4.index.str.lstrip("un|st")
     ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else "Unassigned" for x in ass]
 
-    df4["ass"] = ass
-    df4['ass'] = df4['ass'].astype("category")
-    df4["sti"] = [x[:2] for x in df4.index]
-    df4['sti'] = df4['sti'].astype("category")
+    df4["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df4.index).astype("category")
+    df4["sti"] = pd.Series([x[:2] for x in df4.index], index=df4.index).astype("category")
+
+    df4 = df4[~df4["ass"].isin(["Unassigned", "Essential"])]
 
     df5 = df4.groupby(['sti', 'ass']).mean()
 
@@ -574,7 +573,7 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     df5["signature"] = sigs_mean
     df5["n_cells"] = df4.groupby(['sti', 'ass']).apply(len).sort_values(ascending=False)
     df5.to_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index=True)
-    df5 = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index_col=[0,1], skipinitialspace=True)
+    df5 = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index_col=[0, 1], skipinitialspace=True)
 
     # Filter out genes with less than the 5th percentile of cells
     df5 = df5[df5["n_cells"] >= np.percentile(df5['n_cells'], 5)]
@@ -878,6 +877,70 @@ def explore_knockouts(df, assignment, prefix=""):
             item.set_rotation(90)
         g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.{}.png".format(prefix, gene_set_library)), bbox_inches="tight", dpi=300)
         # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)), bbox_inches="tight")
+
+
+def classify_unassigned(df, assignment, prefix=""):
+    """
+    """
+    from sklearn.cross_validation import LeaveOneOut
+    from sklearn.multiclass import OneVsRestClassifier
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import roc_curve
+
+    df = df.T
+
+    # Only on differential genes
+    diffs = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index_col=0)
+
+    # Annotate cells with stimulus and gRNA assignment
+    # remove opposite gRNA library
+    if "TCR" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Wnt")]
+    elif "WNT" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
+
+    cell_names = df.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
+    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
+
+    # Split into assigned and unassigned cells
+    train = df[~df["ass"].isin(["Unassigned"])][diffs.index.tolist() + ["ass"]]
+    predict = df[df["ass"].isin(["Unassigned"])][diffs.index.tolist() + ["ass"]]
+
+    # Approach 1.
+    # multiclass learning
+
+    #
+
+    # Approach 2.
+    # one vs all learning
+
+    loo = LeaveOneOut(train.shape[0])
+    for i, (train_, test_) in enumerate(loo):
+        print(i)
+
+        p = (OneVsRestClassifier(RandomForestClassifier(random_state=0))
+            .fit(
+                train.ix[train_].drop(["ass"], 1),
+                train.ix[train_]["ass"])
+            .predict_proba(
+                train.ix[test_].drop(["ass"], 1)))
+        if i == 0:
+            scores = p
+        else:
+            scores = np.concatenate([scores, p])
+
+    scores = pd.DataFrame(scores, columns=sorted(train['ass'].unique()), index=train.index[range(len(scores))])
+    scores["truth"] = train["ass"].ix[range(len(scores))]
+    scores.to_csv(os.path.join(results_dir, "classification.diff_genes.csv"))
+
+    # Plot mean group probability for each label
+    sns.heatmap(scores.groupby("truth").mean(), cmap="Greens", square=True)
+
+    # Make ROC curve (for some classes only maybe)
+    roc_curve(train["ass"].ix[range(scores)], scores)
+    roc_curve(train["ass"], scores)
 
 
 def get_grna_colors(d, assignment):
