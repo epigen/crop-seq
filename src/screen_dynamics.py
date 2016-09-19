@@ -90,6 +90,7 @@ def normalize_by_total(df):
 
 def screen_zscore(series, axis=None, z_score=False, plot=True):
     """
+    Calculate screen z score (difference between positive and negative controls).
     """
     Z = lambda pos, neg: 1 - (3 * (np.std(pos) + np.std(neg)) / (abs(np.mean(pos) - np.mean(neg))))
 
@@ -285,7 +286,7 @@ def gRNA_rank(s1, s2, prefix=""):
 def gRNA_rank_stimulus(xx, s2, prefix=""):
     # Difference between unstimulated/stimulated
     fig, axis = plt.subplots(1, 3, sharex=False, sharey=True, figsize=(12, 3))
-    axis = iter(axis.flatten())
+    axis = axis.flatten()
 
     for i, screen in enumerate(s2.columns[::-1]):
         x = s1.join(s2)  # .fillna(0)
@@ -319,12 +320,11 @@ def gRNA_rank_stimulus(xx, s2, prefix=""):
 
     screens = s2.columns[::-1]
     for i in range(0, len(s2.columns), 2):
-        ax = axis.next()
         fc = (xx[screens[i + 1]] - xx[screens[i]]).dropna()
 
         fc.name = screens[i + 1]
         if i == 0:
-            ax.set_ylabel("gRNA fold-change (stimulated / unstimulated)")
+            axis[i].set_ylabel("gRNA fold-change (stimulated / unstimulated)")
             xxx = pd.DataFrame(fc)
         else:
             xxx = xxx.join(fc, how="outer")
@@ -336,10 +336,10 @@ def gRNA_rank_stimulus(xx, s2, prefix=""):
         colors[sns.color_palette("colorblind")[3]] = fc.index.str.contains("Ess")
         colors = colors.apply(lambda j: j[j].index.tolist()[0], axis=1).tolist()
 
-        ax.scatter(fc.rank(ascending=False, method="first"), fc, color=colors, alpha=0.5)
-        ax.axhline(y=0, color='black', linestyle='--', lw=0.5)
-        ax.set_title(re.sub("_stimulated", "", screens[i + 1]))
-        ax.set_xlabel("gRNA rank (stimulated / unstimulated)")
+        axis[i].scatter(fc.rank(ascending=False, method="first"), fc, color=colors, alpha=0.5)
+        axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
+        axis[i].set_title(re.sub("_stimulated", "", screens[i + 1]))
+        axis[i].set_xlabel("gRNA rank (stimulated / unstimulated)")
 
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.diff_condition.svg".format(prefix)), bbox_inches="tight")
@@ -348,7 +348,70 @@ def gRNA_rank_stimulus(xx, s2, prefix=""):
     xxx.to_csv(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.diff_condition.csv".format(prefix)), index=True)
 
 
-root_dir = "/scratch/lab_bock/shared/projects/crop-seq"
+def gRNA_swarmplot(s1, s2, prefix=""):
+    # Rank of gRNA change
+    fig, axis = plt.subplots(3, 2, sharex=True, sharey=True, figsize=(8, 8))
+    axis = axis.flatten()
+
+    for i, screen in enumerate(s2.columns[::-1]):
+        s = s1.join(s2)  # .fillna(0)
+        s = s.iloc[np.random.permutation(len(s))]
+
+        if "original" in prefix:
+            if "TCR" in screen:
+                x = s.ix[s.index[s.index.str.contains("Tcr")]]
+                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_TCR"])
+                y = s.ix[s.index[s.index.str.contains("Essential")]]
+                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["plasmid_pool_TCR"])
+                z = s.ix[s.index[s.index.str.contains("CTRL")]]
+                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["plasmid_pool_TCR"])
+            if "WNT" in screen:
+                x = s.ix[s.index[s.index.str.contains("Wnt")]]
+                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_WNT"])
+                y = s.ix[s.index[s.index.str.contains("Essential")]]
+                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["plasmid_pool_WNT"])
+                z = s.ix[s.index[s.index.str.contains("CTRL")]]
+                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["plasmid_pool_WNT"])
+        elif "plasmid" in prefix:
+            if "TCR" in screen:
+                x = s.ix[s.index[s.index.str.contains("Tcr")]]
+                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_Jurkat"])
+                y = s.ix[s.index[s.index.str.contains("Essential")]]
+                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["gDNA_Jurkat"])
+                z = s.ix[s.index[s.index.str.contains("CTRL")]]
+                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["gDNA_Jurkat"])
+            if "_4_WNT" in screen:
+                x = s.ix[s.index[s.index.str.contains("Wnt")]]
+                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone4"])
+                y = s.ix[s.index[s.index.str.contains("Essential")]]
+                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["gDNA_HEKclone4"])
+                z = s.ix[s.index[s.index.str.contains("CTRL")]]
+                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["gDNA_HEKclone4"])
+            if "_6_WNT" in screen:
+                x = s.ix[s.index[s.index.str.contains("Wnt")]]
+                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone6"])
+                y = s.ix[s.index[s.index.str.contains("Essential")]]
+                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["gDNA_HEKclone6"])
+                z = s.ix[s.index[s.index.str.contains("CTRL")]]
+                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["gDNA_HEKclone6"])
+        else:
+            fc_x = np.log2(1 + x[screen]) - np.log2(1 + x[0])
+
+        fc_x.name = screen
+        fc_y.name = "Essential"
+        fc_z.name = "CTRL"
+
+        sns.violinplot(x="variable", y="value", alpha=0.1, inner="box", data=pd.melt(pd.DataFrame([fc_x, fc_y, fc_z]).T), ax=axis[i])
+        sns.swarmplot(x="variable", y="value", alpha=0.5, data=pd.melt(pd.DataFrame([fc_x, fc_y, fc_z]).T), ax=axis[i])
+        axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
+
+        axis[i].set_title(screen)
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.violin_swarmplot.svg".format(prefix)), bbox_inches="tight")
+
+
+# root_dir = "/scratch/lab_bock/shared/projects/crop-seq"
+root_dir = "."
 results_dir = os.path.join(root_dir, "results")
 sample_annotation = pd.read_csv(os.path.join(root_dir, "metadata/annotation.csv"))
 
@@ -422,21 +485,26 @@ screen_counts = screen_counts.apply(lambda x: (x / x.sum(skipna=True)) * 1e4, ax
 screen_counts.to_csv(os.path.join(results_dir, "gRNA_counts.screen.norm.csv"), index=True)
 
 
+pre_screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.pre_screen.norm.csv"), index_col=0)
+mid_screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.mid_screen.norm.csv"), index_col=0)
+screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.screen.norm.csv"), index_col=0)
+
 # for grna in mid_screen_counts.index[~mid_screen_counts.index.isin(screen_counts.index)]:
 #     screen_counts.loc[grna, ] = 0
 pre_sum = (pre_screen_counts.sum(axis=1) / pre_screen_counts.sum().sum()) * 1e4
 pre_max = (pre_screen_counts.max(axis=1) / pre_screen_counts.sum().sum()) * 1e4
 
 for s1, s1_ in [
-        (pre_screen_counts, "original"),
+        (pre_screen_counts, "original")]:
         # (pd.DataFrame(pre_sum), "plasmid_sum"),
         # (pd.DataFrame(pre_max), "plasmid_max"),
-        (mid_screen_counts, "mid_screen")]:
+        # (mid_screen_counts, "mid_screen")]:
     for s2, s2_ in [(screen_counts, "crop_screen")]:
         gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]))
         gRNA_maplot(s1, s2, prefix="-".join([s1_, s2_]))
         gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]))
-        gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
+        #  gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
+        gRNA_swarmplot(s1, s2, prefix="-".join([s1_, s2_]))
 
 
 # Get screen sensitivity
