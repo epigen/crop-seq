@@ -123,25 +123,21 @@ def gRNA_scatter(s1, s2, prefix=""):
         x = s1.join(s2)  # .fillna(0)
         x = x.iloc[np.random.permutation(len(x))]
 
-        if "original" in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-                b = x["plasmid_pool_TCR"]
-            if "WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                b = x["plasmid_pool_WNT"]
-        elif "plasmid" not in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+        if ("TCR" in screen) or ("Jurkat" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+            if prefix.startswith("mid_screen-"):
                 b = x["gDNA_Jurkat"]
-            if "_4_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                b = x["gDNA_HEKclone4"]
-            if "_6_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                b = x["gDNA_HEKclone6"]
-        else:
-            b = x[0]
+            else:
+                b = x["plasmid_pool_TCR"]
+        elif ("WNT" in screen) or ("HEK" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Tcr")]]
+            if prefix.startswith("mid_screen-"):
+                if "_4_" in prefix:
+                    b = x["gDNA_HEKclone4"]
+                else:
+                    b = x["gDNA_HEKclone6"]
+            else:
+                b = x["plasmid_pool_WNT"]
 
         colors = pd.DataFrame()
         colors[sns.color_palette("colorblind")[0]] = x.index.str.contains("Wnt")
@@ -174,31 +170,23 @@ def gRNA_maplot(s1, s2, prefix=""):
         x = s1.join(s2)  # .fillna(0)
         x = x.iloc[np.random.permutation(len(x))]
 
-        if "original" in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-                M = np.log2(x[screen] * x["plasmid_pool_TCR"]) / 2.
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_TCR"])
-            if "WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                M = np.log2(x[screen] * x["plasmid_pool_WNT"]) / 2.
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_WNT"])
-        elif "plasmid" not in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-                M = np.log2(x[screen] * x["gDNA_Jurkat"]) / 2.
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_Jurkat"])
-            if "_4_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                M = np.log2(x[screen] * x["gDNA_HEKclone4"]) / 2.
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone4"])
-            if "_6_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                M = np.log2(x[screen] * x["gDNA_HEKclone6"]) / 2.
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone6"])
-        else:
-            M = np.log2((1 + x[screen]) * (1 + x[0])) / 2.
-            fc = np.log2(1 + x[screen]) - np.log2(1 + x[0])
+        if ("TCR" in screen) or ("Jurkat" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+            if prefix.startswith("mid_screen-"):
+                b = x["gDNA_Jurkat"]
+            else:
+                b = x["plasmid_pool_TCR"]
+        elif ("WNT" in screen) or ("HEK" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Tcr")]]
+            if prefix.startswith("mid_screen-"):
+                if "_4_" in prefix:
+                    b = x["gDNA_HEKclone4"]
+                else:
+                    b = x["gDNA_HEKclone6"]
+            else:
+                b = x["plasmid_pool_WNT"]
+        M = np.log2(x[screen] * b) / 2.
+        fc = np.log2(1 + x[screen]) - np.log2(1 + b)
 
         fc.name = screen
         if i == 0:
@@ -235,25 +223,22 @@ def gRNA_rank(s1, s2, prefix=""):
         x = s1.join(s2)  # .fillna(0)
         x = x.iloc[np.random.permutation(len(x))]
 
-        if "original" in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_TCR"])
-            if "WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_WNT"])
-        elif "plasmid" not in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_Jurkat"])
-            if "_4_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone4"])
-            if "_6_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone6"])
-        else:
-            fc = np.log2(1 + x[screen]) - np.log2(1 + x[0])
+        if ("TCR" in screen) or ("Jurkat" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+            if prefix.startswith("mid_screen-"):
+                b = x["gDNA_Jurkat"]
+            else:
+                b = x["plasmid_pool_TCR"]
+        elif ("WNT" in screen) or ("HEK" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Tcr")]]
+            if prefix.startswith("mid_screen-"):
+                if "_4_" in prefix:
+                    b = x["gDNA_HEKclone4"]
+                else:
+                    b = x["gDNA_HEKclone6"]
+            else:
+                b = x["plasmid_pool_WNT"]
+        fc = np.log2(1 + x[screen]) - np.log2(1 + b)
 
         fc.name = screen
         if i == 0:
@@ -280,7 +265,13 @@ def gRNA_rank(s1, s2, prefix=""):
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.svg".format(prefix)), bbox_inches="tight")
 
+    # Save ranked list
     xx.to_csv(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.csv".format(prefix)), index=True)
+
+    # Save ranked list of gene-level measurements, reduced by mean and min
+    m = pd.merge(xx.reset_index(), guide_annotation[["oligo_name", "gene"]], left_on="gRNA_name", right_on="oligo_name").drop("oligo_name", axis=1).set_index(["gene", "gRNA_name"])
+    m.groupby(level=[0]).mean().to_csv(os.path.join(results_dir, "gRNA_counts.norm.{}.gene_mean.rank.csv".format(prefix)), index=True)
+    m.groupby(level=[0]).min().to_csv(os.path.join(results_dir, "gRNA_counts.norm.{}.gene_min.rank.csv".format(prefix)), index=True)
 
 
 def gRNA_rank_stimulus(xx, s2, prefix=""):
@@ -292,25 +283,22 @@ def gRNA_rank_stimulus(xx, s2, prefix=""):
         x = s1.join(s2)  # .fillna(0)
         x = x.iloc[np.random.permutation(len(x))]
 
-        if "original" in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_TCR"])
-            if "WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_WNT"])
-        elif "plasmid" not in prefix:
-            if "TCR" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_Jurkat"])
-            if "_4_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone4"])
-            if "_6_WNT" in screen:
-                x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-                fc = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone6"])
-        else:
-            fc = np.log2(1 + x[screen]) - np.log2(1 + x[0])
+        if ("TCR" in screen) or ("Jurkat" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+            if prefix.startswith("mid_screen-"):
+                b = x["gDNA_Jurkat"]
+            else:
+                b = x["plasmid_pool_TCR"]
+        elif ("WNT" in screen) or ("HEK" in screen):
+            x = x.ix[x.index[~x.index.str.contains("Tcr")]]
+            if prefix.startswith("mid_screen-"):
+                if "_4_" in prefix:
+                    b = x["gDNA_HEKclone4"]
+                else:
+                    b = x["gDNA_HEKclone6"]
+            else:
+                b = x["plasmid_pool_WNT"]
+        fc = np.log2(1 + x[screen]) - np.log2(1 + b)
 
         fc.name = screen
         if i == 0:
@@ -357,45 +345,37 @@ def gRNA_swarmplot(s1, s2, prefix=""):
         s = s1.join(s2)  # .fillna(0)
         s = s.iloc[np.random.permutation(len(s))]
 
-        if "original" in prefix:
-            if "TCR" in screen:
-                x = s.ix[s.index[s.index.str.contains("Tcr")]]
-                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_TCR"])
-                y = s.ix[s.index[s.index.str.contains("Essential")]]
-                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["plasmid_pool_TCR"])
-                z = s.ix[s.index[s.index.str.contains("CTRL")]]
-                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["plasmid_pool_TCR"])
-            if "WNT" in screen:
-                x = s.ix[s.index[s.index.str.contains("Wnt")]]
-                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["plasmid_pool_WNT"])
-                y = s.ix[s.index[s.index.str.contains("Essential")]]
-                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["plasmid_pool_WNT"])
-                z = s.ix[s.index[s.index.str.contains("CTRL")]]
-                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["plasmid_pool_WNT"])
-        elif "plasmid" in prefix:
-            if "TCR" in screen:
-                x = s.ix[s.index[s.index.str.contains("Tcr")]]
-                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_Jurkat"])
-                y = s.ix[s.index[s.index.str.contains("Essential")]]
-                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["gDNA_Jurkat"])
-                z = s.ix[s.index[s.index.str.contains("CTRL")]]
-                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["gDNA_Jurkat"])
-            if "_4_WNT" in screen:
-                x = s.ix[s.index[s.index.str.contains("Wnt")]]
-                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone4"])
-                y = s.ix[s.index[s.index.str.contains("Essential")]]
-                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["gDNA_HEKclone4"])
-                z = s.ix[s.index[s.index.str.contains("CTRL")]]
-                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["gDNA_HEKclone4"])
-            if "_6_WNT" in screen:
-                x = s.ix[s.index[s.index.str.contains("Wnt")]]
-                fc_x = np.log2(1 + x[screen]) - np.log2(1 + x["gDNA_HEKclone6"])
-                y = s.ix[s.index[s.index.str.contains("Essential")]]
-                fc_y = np.log2(1 + y[screen]) - np.log2(1 + y["gDNA_HEKclone6"])
-                z = s.ix[s.index[s.index.str.contains("CTRL")]]
-                fc_z = np.log2(1 + z[screen]) - np.log2(1 + z["gDNA_HEKclone6"])
-        else:
-            fc_x = np.log2(1 + x[screen]) - np.log2(1 + x[0])
+        if ("TCR" in screen) or ("Jurkat" in screen):
+            s = s.ix[s.index[~s.index.str.contains("Wnt")]]
+            if prefix.startswith("mid_screen-"):
+                b = s["gDNA_Jurkat"]
+            else:
+                b = s["plasmid_pool_TCR"]
+            x = s.ix[s.index[s.index.str.contains("Tcr")]]
+            y = s.ix[s.index[s.index.str.contains("Essential")]]
+            z = s.ix[s.index[s.index.str.contains("CTRL")]]
+            b_x = b.ix[s.index[s.index.str.contains("Tcr")]]
+            b_y = b.ix[s.index[s.index.str.contains("Essential")]]
+            b_z = b.ix[s.index[s.index.str.contains("CTRL")]]
+        elif ("WNT" in screen) or ("HEK" in screen):
+            s = s.ix[s.index[~s.index.str.contains("Tcr")]]
+            if prefix.startswith("mid_screen-"):
+                if "_4_" in prefix:
+                    b = s["gDNA_HEKclone4"]
+                else:
+                    b = s["gDNA_HEKclone6"]
+            else:
+                b = s["plasmid_pool_WNT"]
+            x = s.ix[s.index[s.index.str.contains("Wnt")]]
+            y = s.ix[s.index[s.index.str.contains("Essential")]]
+            z = s.ix[s.index[s.index.str.contains("CTRL")]]
+            b_x = b.ix[s.index[s.index.str.contains("Wnt")]]
+            b_y = b.ix[s.index[s.index.str.contains("Essential")]]
+            b_z = b.ix[s.index[s.index.str.contains("CTRL")]]
+
+        fc_x = np.log2(1 + x[screen]) - np.log2(1 + b_x)
+        fc_y = np.log2(1 + y[screen]) - np.log2(1 + b_y)
+        fc_z = np.log2(1 + z[screen]) - np.log2(1 + b_z)
 
         fc_x.name = screen
         fc_y.name = "Essential"
@@ -489,21 +469,18 @@ pre_screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.pre_scree
 mid_screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.mid_screen.norm.csv"), index_col=0)
 screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.screen.norm.csv"), index_col=0)
 
-# for grna in mid_screen_counts.index[~mid_screen_counts.index.isin(screen_counts.index)]:
-#     screen_counts.loc[grna, ] = 0
-pre_sum = (pre_screen_counts.sum(axis=1) / pre_screen_counts.sum().sum()) * 1e4
-pre_max = (pre_screen_counts.max(axis=1) / pre_screen_counts.sum().sum()) * 1e4
-
 for s1, s1_ in [
-        (pre_screen_counts, "original")]:
-        # (pd.DataFrame(pre_sum), "plasmid_sum"),
-        # (pd.DataFrame(pre_max), "plasmid_max"),
-        # (mid_screen_counts, "mid_screen")]:
-    for s2, s2_ in [(screen_counts, "crop_screen")]:
+        (pre_screen_counts, "original"),
+        (mid_screen_counts, "mid_screen")]:
+    for s2, s2_ in [
+            (mid_screen_counts, "mid_screen"),
+            (screen_counts, "crop_screen")]:
+        if s1_ == s2_:
+            continue
+        gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]))
         gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]))
         gRNA_maplot(s1, s2, prefix="-".join([s1_, s2_]))
-        gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]))
-        #  gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
+        # gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
         gRNA_swarmplot(s1, s2, prefix="-".join([s1_, s2_]))
 
 
