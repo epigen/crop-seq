@@ -114,7 +114,7 @@ def screen_zscore(series, axis=None, z_score=False, plot=True):
     return z
 
 
-def gRNA_scatter(s1, s2, prefix=""):
+def gRNA_scatter(s1, s2, prefix="", text=False):
     # Scatter of gRNA change
     fig, axis = plt.subplots(3, 2, sharex=False, sharey=False, figsize=(8, 8))
     axis = axis.flatten()
@@ -138,6 +138,8 @@ def gRNA_scatter(s1, s2, prefix=""):
                     b = x["gDNA_HEKclone6"]
             else:
                 b = x["plasmid_pool_WNT"]
+        x = x.fillna(0)
+        b = b.fillna(0)
 
         colors = pd.DataFrame()
         colors[sns.color_palette("colorblind")[0]] = x.index.str.contains("Wnt")
@@ -147,6 +149,9 @@ def gRNA_scatter(s1, s2, prefix=""):
         colors = colors.apply(lambda x: x[x].index.tolist()[0], axis=1).tolist()
 
         axis[i].scatter(np.log2(1 + x[screen]), np.log2(1 + b), color=colors, alpha=0.5)
+        if text:
+            for j in range(len(b)):
+                axis[i].text(np.log2(1 + x[screen].irow(j)), np.log2(1 + b.irow(j)), b.index.tolist()[j])
 
         # x = y line
         lims = [np.nanmin([np.log2(1 + x[screen]), np.log2(1 + b)]), np.nanmax([np.log2(1 + x[screen]), np.log2(1 + b)])]
@@ -158,10 +163,10 @@ def gRNA_scatter(s1, s2, prefix=""):
     for ax in axis[-2:]:
         ax.set_xlabel("gRNA frequency in CROP-seq screen (log2)")
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.scatter.svg".format(prefix)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.scatter.{}svg".format(prefix, "text." if text else "")), bbox_inches="tight")
 
 
-def gRNA_maplot(s1, s2, prefix=""):
+def gRNA_maplot(s1, s2, prefix="", text=False):
     # Rank of gRNA change
     fig, axis = plt.subplots(3, 2, sharex=True, sharey=True, figsize=(8, 8))
     axis = axis.flatten()
@@ -185,7 +190,11 @@ def gRNA_maplot(s1, s2, prefix=""):
                     b = x["gDNA_HEKclone6"]
             else:
                 b = x["plasmid_pool_WNT"]
+        x = x.fillna(0)
+        b = b.fillna(0)
+
         M = np.log2(x[screen] * b) / 2.
+        M = M.replace({-np.inf: 0, np.inf: 9})
         fc = np.log2(1 + x[screen]) - np.log2(1 + b)
 
         fc.name = screen
@@ -202,6 +211,9 @@ def gRNA_maplot(s1, s2, prefix=""):
         colors = colors.apply(lambda x: x[x].index.tolist()[0], axis=1).tolist()
 
         axis[i].scatter(M, fc, color=colors, alpha=0.5)
+        if text:
+            for j in range(len(fc)):
+                axis[i].text(M.irow(j), fc.irow(j), fc.index.tolist()[j])
         axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
 
         axis[i].set_title(screen)
@@ -211,10 +223,10 @@ def gRNA_maplot(s1, s2, prefix=""):
     for ax in axis[-2:]:
         ax.set_xlabel("A")
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.maplot.svg".format(prefix)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.maplot.{}svg".format(prefix, "text." if text else "")), bbox_inches="tight")
 
 
-def gRNA_rank(s1, s2, prefix=""):
+def gRNA_rank(s1, s2, prefix="", text=False):
     # Rank of gRNA change
     fig, axis = plt.subplots(3, 2, sharex=True, sharey=True, figsize=(8, 8))
     axis = axis.flatten()
@@ -238,6 +250,9 @@ def gRNA_rank(s1, s2, prefix=""):
                     b = x["gDNA_HEKclone6"]
             else:
                 b = x["plasmid_pool_WNT"]
+        x = x.fillna(0)
+        b = b.fillna(0)
+
         fc = np.log2(1 + x[screen]) - np.log2(1 + b)
 
         fc.name = screen
@@ -254,6 +269,10 @@ def gRNA_rank(s1, s2, prefix=""):
         colors = colors.apply(lambda x: x[x].index.tolist()[0], axis=1).tolist()
 
         axis[i].scatter(fc.rank(ascending=False, method="first"), fc, color=colors, alpha=0.5)
+        if text:
+            for j in range(len(fc)):
+                axis[i].text(fc.rank(ascending=False, method="first").irow(j), fc.irow(j), fc.index.tolist()[j])
+
         axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
 
         axis[i].set_title(screen)
@@ -263,7 +282,7 @@ def gRNA_rank(s1, s2, prefix=""):
     for ax in axis[-2:]:
         ax.set_xlabel("gRNA rank")
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.svg".format(prefix)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.{}svg".format(prefix, "text." if text else "")), bbox_inches="tight")
 
     # Save ranked list
     xx.to_csv(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.csv".format(prefix)), index=True)
@@ -482,6 +501,10 @@ for s1, s1_ in [
         gRNA_maplot(s1, s2, prefix="-".join([s1_, s2_]))
         # gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
         gRNA_swarmplot(s1, s2, prefix="-".join([s1_, s2_]))
+        # with text labels
+        gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]), text=True)
+        gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]), text=True)
+        gRNA_maplot(s1, s2, prefix="-".join([s1_, s2_]), text=True)
 
 
 # Get screen sensitivity
