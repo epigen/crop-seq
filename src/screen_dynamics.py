@@ -114,7 +114,7 @@ def screen_zscore(series, axis=None, z_score=False, plot=True):
     return z
 
 
-def gRNA_scatter(s1, s2, prefix="", text=False):
+def gRNA_scatter(s1, s2, prefix="", text=False, n_labels=30):
     # Scatter of gRNA change
     fig, axis = plt.subplots(3, 2, sharex=False, sharey=False, figsize=(8, 8))
     axis = axis.flatten()
@@ -150,8 +150,10 @@ def gRNA_scatter(s1, s2, prefix="", text=False):
 
         axis[i].scatter(np.log2(1 + x[screen]), np.log2(1 + b), color=colors, alpha=0.5)
         if text:
-            for j in range(len(b)):
-                axis[i].text(np.log2(1 + x[screen].irow(j)), np.log2(1 + b.irow(j)), b.index.tolist()[j])
+            order = (x[screen] / b).sort_values()
+            for j in range(n_labels):
+                axis[i].text(np.log2(1 + x[screen].ix[order.index.tolist()[-j]]), np.log2(1 + b.ix[order.index.tolist()[-j]]), order.index.tolist()[-j])
+                axis[i].text(np.log2(1 + x[screen].ix[order.index.tolist()[j]]), np.log2(1 + b.ix[order.index.tolist()[j]]), order.index.tolist()[j])
 
         # x = y line
         lims = [np.nanmin([np.log2(1 + x[screen]), np.log2(1 + b)]), np.nanmax([np.log2(1 + x[screen]), np.log2(1 + b)])]
@@ -164,9 +166,10 @@ def gRNA_scatter(s1, s2, prefix="", text=False):
         ax.set_xlabel("gRNA frequency in CROP-seq screen (log2)")
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.scatter.{}svg".format(prefix, "text." if text else "")), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.scatter.{}pdf".format(prefix, "text." if text else "")), bbox_inches="tight")
 
 
-def gRNA_maplot(s1, s2, prefix="", text=False):
+def gRNA_maplot(s1, s2, prefix="", text=False, n_labels=30):
     # Rank of gRNA change
     fig, axis = plt.subplots(3, 2, sharex=True, sharey=True, figsize=(8, 8))
     axis = axis.flatten()
@@ -212,8 +215,17 @@ def gRNA_maplot(s1, s2, prefix="", text=False):
 
         axis[i].scatter(M, fc, color=colors, alpha=0.5)
         if text:
-            for j in range(len(fc)):
-                axis[i].text(M.irow(j), fc.irow(j), fc.index.tolist()[j])
+            order = fc.sort_values().index.tolist()
+            for j in range(n_labels):
+                axis[i].text(
+                    M.ix[order[j]],
+                    fc.ix[order[j]],
+                    order[j])
+                axis[i].text(
+                    M.ix[order[-j]],
+                    fc.ix[order[-j]],
+                    order[-j])
+
         axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
 
         axis[i].set_title(screen)
@@ -224,9 +236,10 @@ def gRNA_maplot(s1, s2, prefix="", text=False):
         ax.set_xlabel("A")
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.maplot.{}svg".format(prefix, "text." if text else "")), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.maplot.{}pdf".format(prefix, "text." if text else "")), bbox_inches="tight")
 
 
-def gRNA_rank(s1, s2, prefix="", text=False):
+def gRNA_rank(s1, s2, prefix="", text=False, n_labels=30):
     # Rank of gRNA change
     fig, axis = plt.subplots(3, 2, sharex=True, sharey=True, figsize=(8, 8))
     axis = axis.flatten()
@@ -270,8 +283,15 @@ def gRNA_rank(s1, s2, prefix="", text=False):
 
         axis[i].scatter(fc.rank(ascending=False, method="first"), fc, color=colors, alpha=0.5)
         if text:
-            for j in range(len(fc)):
-                axis[i].text(fc.rank(ascending=False, method="first").irow(j), fc.irow(j), fc.index.tolist()[j])
+            for j in range(n_labels):
+                axis[i].text(
+                    fc.sort_values(ascending=True).rank(ascending=False, method="first").irow(j),
+                    fc.sort_values(ascending=True).irow(j),
+                    fc.sort_values(ascending=True).index.tolist()[j])
+                axis[i].text(
+                    fc.sort_values(ascending=False).rank(ascending=False, method="first").irow(j),
+                    fc.sort_values(ascending=False).irow(j),
+                    fc.sort_values(ascending=False).index.tolist()[j])
 
         axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
 
@@ -283,6 +303,7 @@ def gRNA_rank(s1, s2, prefix="", text=False):
         ax.set_xlabel("gRNA rank")
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.{}svg".format(prefix, "text." if text else "")), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.{}pdf".format(prefix, "text." if text else "")), bbox_inches="tight")
 
     # Save ranked list
     xx.to_csv(os.path.join(results_dir, "gRNA_counts.norm.{}.rank.csv".format(prefix)), index=True)
