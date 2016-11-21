@@ -7,6 +7,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
 import re
+from looper.models import Project
 
 
 # Set settings
@@ -123,21 +124,11 @@ def gRNA_scatter(s1, s2, prefix="", text=False, n_labels=30):
         x = s1.join(s2)  # .fillna(0)
         x = x.iloc[np.random.permutation(len(x))]
 
-        if ("TCR" in screen) or ("Jurkat" in screen):
-            x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-            if prefix.startswith("mid_screen-"):
-                b = x["gDNA_Jurkat"]
-            else:
-                b = x["plasmid_pool_TCR"]
-        elif ("WNT" in screen) or ("HEK" in screen):
-            x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-            if prefix.startswith("mid_screen-"):
-                if "_4_" in prefix:
-                    b = x["gDNA_HEKclone4"]
-                else:
-                    b = x["gDNA_HEKclone6"]
-            else:
-                b = x["plasmid_pool_WNT"]
+        x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+        if prefix.startswith("mid_screen-"):
+            b = x["gDNA_Jurkat"]
+        else:
+            b = x["plasmid_pool_TCR"]
         x = x.fillna(0)
         b = b.fillna(0)
 
@@ -150,10 +141,8 @@ def gRNA_scatter(s1, s2, prefix="", text=False, n_labels=30):
 
         axis[i].scatter(np.log2(1 + x[screen]), np.log2(1 + b), color=colors, alpha=0.5)
         if text:
-            order = (x[screen] / b).sort_values()
-            for j in range(n_labels):
-                axis[i].text(np.log2(1 + x[screen].ix[order.index.tolist()[-j]]), np.log2(1 + b.ix[order.index.tolist()[-j]]), order.index.tolist()[-j])
-                axis[i].text(np.log2(1 + x[screen].ix[order.index.tolist()[j]]), np.log2(1 + b.ix[order.index.tolist()[j]]), order.index.tolist()[j])
+            for j in x[x.index.str.contains("ETS1|GATA3|RUNX1")].index:
+                axis[i].text(np.log2(1 + x[screen].ix[j]), np.log2(1 + b.ix[j]), j)
 
         # x = y line
         lims = [np.nanmin([np.log2(1 + x[screen]), np.log2(1 + b)]), np.nanmax([np.log2(1 + x[screen]), np.log2(1 + b)])]
@@ -178,21 +167,11 @@ def gRNA_maplot(s1, s2, prefix="", text=False, n_labels=30):
         x = s1.join(s2)  # .fillna(0)
         x = x.iloc[np.random.permutation(len(x))]
 
-        if ("TCR" in screen) or ("Jurkat" in screen):
-            x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-            if prefix.startswith("mid_screen-"):
-                b = x["gDNA_Jurkat"]
-            else:
-                b = x["plasmid_pool_TCR"]
-        elif ("WNT" in screen) or ("HEK" in screen):
-            x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-            if prefix.startswith("mid_screen-"):
-                if "_4_" in prefix:
-                    b = x["gDNA_HEKclone4"]
-                else:
-                    b = x["gDNA_HEKclone6"]
-            else:
-                b = x["plasmid_pool_WNT"]
+        x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+        if prefix.startswith("mid_screen-"):
+            b = x["gDNA_Jurkat"]
+        else:
+            b = x["plasmid_pool_TCR"]
         x = x.fillna(0)
         b = b.fillna(0)
 
@@ -215,16 +194,11 @@ def gRNA_maplot(s1, s2, prefix="", text=False, n_labels=30):
 
         axis[i].scatter(M, fc, color=colors, alpha=0.5)
         if text:
-            order = fc.sort_values().index.tolist()
-            for j in range(n_labels):
+            for j in x[x.index.str.contains("ETS1|GATA3|RUNX1")].index:
                 axis[i].text(
-                    M.ix[order[j]],
-                    fc.ix[order[j]],
-                    order[j])
-                axis[i].text(
-                    M.ix[order[-j]],
-                    fc.ix[order[-j]],
-                    order[-j])
+                    M.ix[j],
+                    fc.ix[j],
+                    j)
 
         axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
 
@@ -248,21 +222,12 @@ def gRNA_rank(s1, s2, prefix="", text=False, n_labels=30):
         x = s1.join(s2)  # .fillna(0)
         x = x.iloc[np.random.permutation(len(x))]
 
-        if ("TCR" in screen) or ("Jurkat" in screen):
-            x = x.ix[x.index[~x.index.str.contains("Wnt")]]
-            if prefix.startswith("mid_screen-"):
-                b = x["gDNA_Jurkat"]
-            else:
-                b = x["plasmid_pool_TCR"]
-        elif ("WNT" in screen) or ("HEK" in screen):
-            x = x.ix[x.index[~x.index.str.contains("Tcr")]]
-            if prefix.startswith("mid_screen-"):
-                if "_4_" in prefix:
-                    b = x["gDNA_HEKclone4"]
-                else:
-                    b = x["gDNA_HEKclone6"]
-            else:
-                b = x["plasmid_pool_WNT"]
+        x = x.ix[x.index[~x.index.str.contains("Wnt")]]
+        if prefix.startswith("mid_screen-"):
+            b = x["gDNA_Jurkat"]
+        else:
+            b = x["plasmid_pool_TCR"]
+
         x = x.fillna(0)
         b = b.fillna(0)
 
@@ -283,16 +248,11 @@ def gRNA_rank(s1, s2, prefix="", text=False, n_labels=30):
 
         axis[i].scatter(fc.rank(ascending=False, method="first"), fc, color=colors, alpha=0.5)
         if text:
-            for j in range(n_labels):
+            for j in x[x.index.str.contains("ETS1|GATA3|RUNX1")].index:
                 axis[i].text(
-                    fc.sort_values(ascending=True).rank(ascending=False, method="first").irow(j),
-                    fc.sort_values(ascending=True).irow(j),
-                    fc.sort_values(ascending=True).index.tolist()[j])
-                axis[i].text(
-                    fc.sort_values(ascending=False).rank(ascending=False, method="first").irow(j),
-                    fc.sort_values(ascending=False).irow(j),
-                    fc.sort_values(ascending=False).index.tolist()[j])
-
+                    fc.rank(ascending=False, method="first").ix[j],
+                    fc.ix[j],
+                    j)
         axis[i].axhline(y=0, color='black', linestyle='--', lw=0.5)
 
         axis[i].set_title(screen)
@@ -430,14 +390,18 @@ def gRNA_swarmplot(s1, s2, prefix=""):
     fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.violin_swarmplot.svg".format(prefix)), bbox_inches="tight")
 
 
-# root_dir = "/scratch/lab_bock/shared/projects/crop-seq"
-root_dir = "."
-results_dir = os.path.join(root_dir, "results")
-sample_annotation = pd.read_csv(os.path.join(root_dir, "metadata/annotation.csv"))
+prj = Project(os.path.join("metadata", "config.separate.yaml"))
+prj.add_sample_sheet()
+prj.paths.results_dir = results_dir = os.path.join("results")
+
+sample_annotation = prj.sheet.df
 
 # get guide annotation
-guide_annotation = os.path.join(root_dir, "metadata/guide_annotation.csv")
+guide_annotation = os.path.join("metadata", "guide_annotation.csv")
 guide_annotation = pd.read_csv(guide_annotation)
+
+
+experiment = "CROP-seq_Jurkat_TCR"
 
 
 # get guide quantification pre screen
@@ -463,27 +427,14 @@ mid_screen_counts.to_csv(os.path.join(results_dir, "gRNA_counts.mid_screen.csv")
 
 # get guide quantification from CROP-seq
 # merge output (reads in constructs and assignemnts) of each sample
-reads_all = scores_all = assignment_all = pd.DataFrame()
 
-for sample_name in sample_annotation[~sample_annotation["grna_library"].isnull()]["sample_name"].unique():
-    reads = pd.read_csv(os.path.join(root_dir, "results_pipeline", sample_name, "quantification", "guide_cell_quantification.csv"))
-    scores = pd.read_csv(os.path.join(root_dir, "results_pipeline", sample_name, "quantification", "guide_cell_scores.csv"), index_col=0).reset_index()
-    assignment = pd.read_csv(os.path.join(root_dir, "results_pipeline", sample_name, "quantification", "guide_cell_assignment.csv"))
+reads = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)))
+scores = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_scores.all.csv".format(experiment)))
+assignment = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)))
 
-    reads["sample"] = scores["sample"] = assignment["sample"] = sample_name
-    reads["experiment"] = scores["experiment"] = assignment["experiment"] = sample_name
-
-    reads_all = reads_all.append(reads)
-    scores_all = scores_all.append(scores)
-    assignment_all = assignment_all.append(assignment)
-
-reads_all.to_csv(os.path.join(results_dir, "guide_cell_quantification.all.csv"), index=False)
-scores_all.to_csv(os.path.join(results_dir, "guide_cell_scores.all.csv"), index=False)
-assignment_all.to_csv(os.path.join(results_dir, "guide_cell_assignment.all.csv"), index=False)
-
-screen_counts = pd.pivot_table(assignment_all.groupby(["experiment", "assignment"]).apply(len).reset_index(), index="assignment", columns="experiment", fill_value=0)
+screen_counts = pd.pivot_table(assignment.groupby(["experiment", "condition", "assignment"]).apply(len).reset_index(), index="assignment", columns="condition", fill_value=0)
 screen_counts.columns = screen_counts.columns.droplevel(level=0)
-screen_counts.to_csv(os.path.join(results_dir, "gRNA_counts.screen.csv"), index=True)
+screen_counts.to_csv(os.path.join(results_dir, "{}.gRNA_counts.screen.csv".format(experiment)), index=True)
 
 
 # Filter out non-existing gRNAs and opposite gRNA library.
@@ -496,18 +447,18 @@ screen_counts = filter_gRNAs(screen_counts, prefix="screen")
 
 # Normalize
 pre_screen_counts = pre_screen_counts.apply(lambda x: (x / x.sum(skipna=True)) * 1e4, axis=0)
-pre_screen_counts.to_csv(os.path.join(results_dir, "gRNA_counts.pre_screen.norm.csv"), index=True)
+pre_screen_counts.to_csv(os.path.join(results_dir, "{}.gRNA_counts.pre_screen.norm.csv".format(experiment)), index=True)
 
 mid_screen_counts = mid_screen_counts.apply(lambda x: (x / x.sum(skipna=True)) * 1e4, axis=0)
-mid_screen_counts.to_csv(os.path.join(results_dir, "gRNA_counts.mid_screen.norm.csv"), index=True)
+mid_screen_counts.to_csv(os.path.join(results_dir, "{}.gRNA_counts.mid_screen.norm.csv".format(experiment)), index=True)
 
 screen_counts = screen_counts.apply(lambda x: (x / x.sum(skipna=True)) * 1e4, axis=0)
-screen_counts.to_csv(os.path.join(results_dir, "gRNA_counts.screen.norm.csv"), index=True)
+screen_counts.to_csv(os.path.join(results_dir, "{}.gRNA_counts.screen.norm.csv".format(experiment)), index=True)
 
 
-pre_screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.pre_screen.norm.csv"), index_col=0)
-mid_screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.mid_screen.norm.csv"), index_col=0)
-screen_counts = pd.read_csv(os.path.join(results_dir, "gRNA_counts.screen.norm.csv"), index_col=0)
+pre_screen_counts = pd.read_csv(os.path.join(results_dir, "{}.gRNA_counts.pre_screen.norm.csv".format(experiment)), index_col=0)
+mid_screen_counts = pd.read_csv(os.path.join(results_dir, "{}.gRNA_counts.mid_screen.norm.csv".format(experiment)), index_col=0)
+screen_counts = pd.read_csv(os.path.join(results_dir, "{}.gRNA_counts.screen.norm.csv".format(experiment)), index_col=0)
 
 for s1, s1_ in [
         (pre_screen_counts, "original"),
@@ -517,11 +468,11 @@ for s1, s1_ in [
             (screen_counts, "crop_screen")]:
         if s1_ == s2_:
             continue
-        gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]))
-        gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]))
-        gRNA_maplot(s1, s2, prefix="-".join([s1_, s2_]))
-        # gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
-        gRNA_swarmplot(s1, s2, prefix="-".join([s1_, s2_]))
+        # gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]))
+        # gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]))
+        # gRNA_maplot(s1, s2, prefix="-".join([s1_, s2_]))
+        # # gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
+        # gRNA_swarmplot(s1, s2, prefix="-".join([s1_, s2_]))
         # with text labels
         gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]), text=True)
         gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]), text=True)
@@ -571,3 +522,73 @@ fig.savefig(os.path.join(results_dir, "gRNA_counts.screen_sensitivity.barplot.sv
 
 
 # plot replicates
+
+# Library composition
+counts = pre_screen_counts.join(mid_screen_counts).join(screen_counts)
+counts = counts.ix[counts.index[~counts.index.str.contains("Wnt")]].sort_index(ascending=False)
+counts = counts[counts.columns[~counts.columns.str.contains("WNT|HEK")]]
+
+# heatmap
+fig, axis = plt.subplots(1)
+sns.heatmap(
+    counts,
+    cmap="BuGn",
+    ax=axis)
+axis.set_xticklabels(axis.get_xticklabels(), rotation="vertical")
+axis.set_yticklabels(axis.get_yticklabels(), rotation="horizontal")
+fig.savefig(os.path.join(results_dir, "gRNA_counts.fold_distribution.heatmap.svg"), bbox_inches="tight")
+
+# heatmap + z_score
+fig, axis = plt.subplots(1)
+sns.heatmap(
+    counts.apply(lambda x: (x - x.mean()) / x.std(), axis=1),
+    ax=axis)
+axis.set_xticklabels(axis.get_xticklabels(), rotation="vertical")
+axis.set_yticklabels(axis.get_yticklabels(), rotation="horizontal")
+fig.savefig(os.path.join(results_dir, "gRNA_counts.fold_distribution.heatmap.z_score.svg"), bbox_inches="tight")
+
+# ranks
+fig, axis = plt.subplots(2, 2, sharex=False, sharey=True)
+axis = axis.flatten()
+for i, name in enumerate(counts.columns):
+    axis[i].plot(
+        counts[name].sort_values(), (np.arange(len(counts[name])) / float(len(counts[name]))) * 100
+    )
+    p = np.percentile(counts[name].dropna().sort_values(), 90), np.percentile(counts[name].dropna().sort_values(), 10)
+    axis[i].axvline(p[1], linestyle="--", color="black")
+    axis[i].axvline(p[0], linestyle="--", color="black")
+    axis[i].set_title(name)
+    axis[i].text(0.5, 0.5, str(p[0] / p[1]))
+sns.despine(fig)
+fig.savefig(os.path.join(results_dir, "gRNA_counts.fold_distribution.lineplot.svg"), bbox_inches="tight")
+
+
+# Plot gRNA abundance variability
+# get accuracy prediction
+counts_annot = pd.merge(counts.reset_index(), guide_annotation, left_on="gRNA_name", right_on="oligo_name")
+
+# group grnas by gene
+# compute amplitude/var/std
+var = counts_annot.groupby("gene")[counts.columns.tolist() + ["efficiency_score"]].std()
+mean = counts_annot.groupby("gene")[counts.columns.tolist() + ["efficiency_score"]].mean()
+varmean = var / mean
+
+# plot power vs variability
+fig, axis = plt.subplots(2, 2, sharex=False, sharey=True)
+for i, s in enumerate(counts.columns):
+    axis.flat[i].scatter(mean[s], var[s])
+    axis.flat[i].set_title(s)
+    axis.flat[i].set_xlabel("Mean")
+    axis.flat[i].set_ylabel("Std")
+sns.despine(fig)
+fig.savefig(os.path.join(results_dir, "gRNA_counts.mean_std.scatter.svg"), bbox_inches="tight")
+
+# plot predicted variability vs observed
+fig, axis = plt.subplots(2, 2, sharex=False, sharey=True)
+for i, s in enumerate(counts.columns):
+    axis.flat[i].scatter(varmean[s], var["efficiency_score"])
+    axis.flat[i].set_title(s)
+    axis.flat[i].set_xlabel("qv (Cell abundance)")
+    axis.flat[i].set_ylabel("qv (gRNA efficiency)")
+sns.despine(fig)
+fig.savefig(os.path.join(results_dir, "gRNA_counts.qv-crop_efficiency.scatter.svg"), bbox_inches="tight")
