@@ -7,6 +7,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from looper.models import Project
+
 
 # Set settings
 pd.set_option("date_dayfirst", True)
@@ -30,29 +32,66 @@ def normalize(df, experiment="", kind="total"):
         import pandas.rpy.common as com
 
         run = robj.r("""
+            module unload R
+            module load gcc/6.0.0
+            module load texlive
+            module load R/3.2.3
+
             function(to_norm, output){
                 library(Seurat)
                 library(dplyr)
                 library(Matrix)
 
-                to_norm = Matrix(as.matrix(to_norm), sparse = TRUE)
+                # if run manually:
+                library(rhdf5)
+                to_norm <- h5read("~/projects/crop-seq/results/CROP-seq_Jurkat_TCR.digital_expression.500genes.hdf5", "exp_matrix")
+
+                # else:
+                # to_norm = Matrix(as.matrix(to_norm), sparse = TRUE)
+
+                # Make dataframe
+                M = as.data.frame(t(to_norm$block0_values))
+                names = paste(  # VERY IMPORTANT!: remember R is 1-based and the level indexes come from Python!
+                    as.character(to_norm$block0_items_level0[to_norm$block0_items_label0 + 1]),
+                    as.character(to_norm$block0_items_level1[to_norm$block0_items_label1 + 1]),
+                    as.character(to_norm$block0_items_level2[to_norm$block0_items_label2 + 1])
+                    as.character(to_norm$block0_items_level3[to_norm$block0_items_label3 + 1]), sep="")
+                colnames(M) <- names
+                rownames(M) <- to_norm$axis1
 
                 # Initialize the Seurat object with the raw data
-                exp <- new("seurat", raw.data = to_norm)
+                exp <- new("seurat", raw.data = M)
 
-                # Keep all genes expressed in 1% of cells, keep all cells with >= 200 genes
+                # Keep all genes expressed in at least 20 cells, keep all cells with >= 200 genes
                 exp <- Setup(
-                    exp, min.cells=dim(to_norm)[2] / 100., min.genes=200,
-                    do.logNormalize=T, total.expr=1e4, project="cropseq")
+                    exp, project="cropseq",
+                    min.cells=20, min.genes=200,
+                    do.logNormalize=T, total.expr=1e4)
+
+                # Stash cell attributes
+                exp <- AddMetaData(exp, to_norm$block0_items_level0[to_norm$block0_items_label0 + 1], "condition")
+                exp <- AddMetaData(exp, as.factor(to_norm$block0_items_level1[to_norm$block0_items_label1 + 1]), "replicate")
+                exp <- AddMetaData(exp, to_norm$block0_items_level2[to_norm$block0_items_label2 + 1], "cell")
 
                 # Calculate the percentage of mitochondrial genes and store it.
                 mito.genes <- grep("^MT-", rownames(exp@data), value=T)
-                percent.mito <- colSums(expm1(exp@data[mito.genes, ]))/colSums(expm1(exp@data))
-
-                # AddMetaData adds columns to object@data.info, and is a great place to stash QC stats
+                percent.mito <- colSums(expm1(exp@data[mito.genes, ])) / colSums(expm1(exp@data))
                 exp <- AddMetaData(exp, percent.mito, "percent.mito")
+                # Calculate the percentage of ribosomal genes and store it.
+                ribo.genes <- grep("^RP", rownames(exp@data), value=T)
+                percent.ribo <- colSums(expm1(exp@data[ribo.genes, ])) / colSums(expm1(exp@data))
+                exp <- AddMetaData(exp, percent.ribo, "percent.ribo")
 
-                # Filter out cells with more than the 95th percentil of mitochondrial transcripts
+                # Plot QC stats
+                VlnPlot(exp, c("replicate", "nGene", "nUMI", "percent.mito"))
+                GenePlot(exp,"IL2RA","MALAT1",cex.use = 1)
+                par(mfrow = c(2, 2))
+                GenePlot(exp, "nUMI", "nGene")
+                GenePlot(exp, "nUMI", "percent.mito")
+                GenePlot(exp, "nUMI", "percent.ribo")
+                GenePlot(exp, "percent.ribo", "percent.mito")
+
+                # Filter out cells with more than the 95th percentile of mitochondrial transcripts
                 exp_subset <- SubsetData(
                     exp, subset.name="percent.mito",
                     accept.high=quantile(percent.mito, 0.95))
@@ -60,9 +99,28 @@ def normalize(df, experiment="", kind="total"):
                 # Regress out
                 exp_subset_regressed <- RegressOut(exp_subset, latent.vars=c("nUMI", "percent.mito"))
 
-                write.table(as.matrix(exp_subset_regressed@data), file=output, sep=",", quote=FALSE)
+                # Write as hdf5
+                output = "~/projects/crop-seq/results/CROP-seq_Jurkat_TCR.digital_expression.500genes.seurat_regressed.h5"
+                h5createFile(output)
+                h5createGroup(output, "seurat_matrix")
+                h5write(as.matrix(exp_subset_regressed@scale.data), file=output, "seurat_matrix/matrix")
+                h5write(colnames(exp_subset_regressed@scale.data), file=output, "seurat_matrix/columns")
+                h5write(rownames(exp_subset_regressed@scale.data), file=output, "seurat_matrix/rows")
+                H5close(output)
 
+                write.table(as.matrix(exp_subset_regressed@scale.data), file=output, sep=",", quote=FALSE)
+                save(exp_subset_regressed, "~/projects/crop-seq/results/CROP-seq_Jurkat_TCR.digital_expression.500genes.seurat.regressed.Rdata")
                 return(as.matrix(exp_subset_regressed@data))
+
+
+                # continue to explore
+                exp_subset_regressed <- MeanVarPlot(exp_subset_regressed ,fxn.x=expMean, fxn.y=logVarDivMean, x.low.cutoff=0.0125, x.high.cutoff=3, y.cutoff=0.5, do.contour=F)
+
+                length(exp_subset_regressed@var.genes)
+
+                exp_subset_regressed <- PCA(exp_subset_regressed, pc.genes = exp_subset_regressed@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
+
+
             }
 
         """)
@@ -83,6 +141,27 @@ def normalize(df, experiment="", kind="total"):
         regressed.to_pickle(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.pickle".format(experiment)))
         regressed.to_csv(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.csv".format(experiment)))
         return regressed
+
+
+def read_seurat_hdf5(hdf5_file, assignment):
+    import h5py
+    with h5py.File(hdf5_file, 'r') as handle:
+        cols = handle.get("seurat_matrix/columns").value
+        rows = handle.get("seurat_matrix/rows").value
+        df = handle.get("seurat_matrix/matrix").value
+    seurat_matrix = pd.DataFrame(df, index=cols, columns=rows).T
+
+    assignment['fullname'] = assignment['condition'].astype(str) + assignment['replicate'].astype(int).astype(str) + assignment['cell'].astype(str)
+
+    # add info as multiindex columns
+    arrays = [
+        seurat_matrix.columns.str.extract("(^.*)\d.*"),
+        seurat_matrix.columns.str.extract(".*(\d).*"),
+        seurat_matrix.columns.str.extract(".*\d(.*)"),
+        assignment.set_index('fullname').ix[seurat_matrix.columns]['assignment'].tolist()]
+    seurat_matrix.columns = pd.MultiIndex.from_tuples(list(zip(*arrays)), names=['condition', 'replicate', 'cell', 'grna'])
+
+    return seurat_matrix
 
 
 def unsupervised(df, prefix=""):
@@ -123,11 +202,19 @@ def differential_genes(pos, neg, assignment, prefix="", method="mannwhitney"):
         b_ = b.mean()
         return [a_, b_, np.log2((a_) / (b_))] + list(mannwhitneyu(a, b))
 
-    def test_2():
+    def scde():
+        return
+
+    def deseq2(df):
+        df.to_csv("count_matrix.csv")
+        pd.DataFrame([df.columns, df.columns.str.get(0)], index=["cell", "condition"]).T.to_csv("col_matrix.csv", index=False)
         return
 
     print("Doing differnetial gene expression for experiment: '{}'".format(experiment))
     print("Comparing expression of {} with {} cells in {} genes.".format(pos.shape[1], neg.shape[1], pos.shape[0]))
+
+    if method == "deseq":
+        return deseq2()
 
     pos["intercept"] = 0.1
     neg["intercept"] = 0.1
@@ -158,29 +245,86 @@ def differential_genes(pos, neg, assignment, prefix="", method="mannwhitney"):
 def plot_deg_stats(stats, prefix=""):
     """
     """
+    if "WNT" in prefix:
+        df2 = stats[(stats["q_value"] < 0.05)]
+    else:
+        df2 = stats[
+            (stats["q_value"] < 0.05) &  # filter by p-value
+            (abs(stats["fold_change"]) > np.log2(1.5))  # filter by fold-change
+        ]
+    sig_down = df2[df2["fold_change"] < 0]
+    sig_up = df2[df2["fold_change"] > 0]
 
-    # Volcano plot
-    colors = [sns.color_palette("colorblind")[2] if x < 0.05 else sns.color_palette("colorblind")[0] for x in stats["q_value"]]
-    sizes = [15 if x < 0.05 else 7.5 for x in stats["q_value"]]
+    fig, axis = plt.subplots(2, 2, figsize=(12, 12))
+    axis = axis.flatten()
+    axis[0].hexbin(stats["b_mean"], stats["a_mean"], bins=None, mincnt=1, color="black", alpha=0.2)
+    axis[0].scatter(sig_down["b_mean"], sig_down["a_mean"], color=sns.color_palette("colorblind")[0], alpha=0.5, s=10)
+    axis[0].scatter(sig_down["b_mean"], sig_down["a_mean"], color=sns.color_palette("colorblind")[0], alpha=0.5, s=10)
+    axis[0].scatter(sig_up["b_mean"], sig_up["a_mean"], color=sns.color_palette("colorblind")[2], alpha=0.5, s=10)
+    axis[0].set_title("Scatter plot for {}".format(experiment))
+    axis[0].set_xlabel(u"Naïve")
+    axis[0].set_ylabel("Stimulated")
 
-    fig, axis = plt.subplots(1, 3, figsize=(18, 6))
-    axis[0].scatter(stats["fold_change"], stats["log_p_value"], color=colors, alpha=0.2, s=sizes)
-    axis[0].set_title("Volcano plot for {}".format(experiment))
-    axis[0].set_xlabel("Log fold change")
-    axis[0].set_xlabel("p value")
-
-    axis[1].scatter(stats["fold_change"], stats["log_q_value"], color=colors, alpha=0.2, s=sizes)
+    axis[1].scatter(stats["fold_change"], stats["log_p_value"], color="grey", alpha=0.2)
+    axis[1].scatter(sig_down["fold_change"], sig_down["log_p_value"], color=sns.color_palette("colorblind")[0], alpha=0.2)
+    axis[1].scatter(sig_up["fold_change"], sig_up["log_p_value"], color=sns.color_palette("colorblind")[2], alpha=0.2)
     axis[1].set_title("Volcano plot for {}".format(experiment))
     axis[1].set_xlabel("Log fold change")
-    axis[1].set_xlabel("q value (BH)")
+    axis[1].set_ylabel("p value")
+
+    axis[2].scatter(stats["fold_change"], stats["log_p_value"], color="grey", alpha=0.2)
+    axis[2].scatter(sig_down["fold_change"], sig_down["log_p_value"], color=sns.color_palette("colorblind")[0], alpha=0.2)
+    axis[2].scatter(sig_up["fold_change"], sig_up["log_p_value"], color=sns.color_palette("colorblind")[2], alpha=0.2)
+    axis[2].set_title("Volcano plot for {}".format(experiment))
+    axis[2].set_xlabel("Log fold change")
+    axis[2].set_ylabel("p value")
 
     # MA plot
-    axis[2].scatter(np.log2(pos.mean(1) * neg.mean(1)) / 2., stats["fold_change"], color=colors, alpha=0.2, s=sizes)
-    axis[2].set_title("MA plot for {}".format(experiment))
-    axis[2].set_xlabel("M")
-    axis[2].set_xlabel("A")
+    axis[3].scatter(np.log2(stats["b_mean"] * stats["a_mean"]) / 2., stats["fold_change"], color="grey", alpha=0.2)
+    axis[3].scatter(np.log2(sig_down["b_mean"] * sig_down["a_mean"]) / 2., sig_down["fold_change"], color=sns.color_palette("colorblind")[0], alpha=0.2)
+    axis[3].scatter(np.log2(sig_up["b_mean"] * sig_up["a_mean"]) / 2., sig_up["fold_change"], color=sns.color_palette("colorblind")[2], alpha=0.2)
+    axis[3].set_title("MA plot for {}".format(experiment))
+    axis[3].set_xlabel("M")
+    axis[3].set_ylabel("A")
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "differential_expression.{}.stimutation.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # Scatter of joint posteriors
+    post = pd.read_csv("/home/arendeiro/projects/crop-seq/results/digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.joint_posteriors.csv")
+    stats = pd.read_csv(
+        os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
+    )
+    stats.index.name = "gene_name"
+    genes = stats[abs(stats["cZ"]) > 1.5].index
+
+    fig, axis = plt.subplots(1, figsize=(6, 6))
+    axis.hexbin(
+        np.log2(1 + post['CROP-seq_Jurkat_TCR_unstimulated']),
+        np.log2(1 + post['CROP-seq_Jurkat_TCR_stimulated']),
+        alpha=1, bins='log', gridsize=200)
+    axis.scatter(
+        np.log2(1 + post['CROP-seq_Jurkat_TCR_unstimulated'].ix[genes]),
+        np.log2(1 + post['CROP-seq_Jurkat_TCR_stimulated'].ix[genes]),
+        alpha=1, color="red")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "differential_expression.{}.joint_posterior.scatter.png".format(prefix)), bbox_inches="tight", dpi=300)
+    fig.savefig(os.path.join(results_dir, "differential_expression.{}.joint_posterior.scatter.svg".format(prefix)), bbox_inches="tight")
+
+    # MA of joint posteriors
+    fig, axis = plt.subplots(1, figsize=(6, 6))
+    axis.hexbin(
+        np.log2(post['CROP-seq_Jurkat_TCR_unstimulated'] * post['CROP-seq_Jurkat_TCR_stimulated']) / 2.,
+        stats["Z"].ix[post.index],
+        alpha=1, bins='log', gridsize=200)
+    axis.scatter(
+        np.log2(post['CROP-seq_Jurkat_TCR_unstimulated'].ix[genes] * post['CROP-seq_Jurkat_TCR_stimulated'].ix[genes]) / 2.,
+        stats["Z"].ix[genes], color="red", alpha=1)
+    axis.set_title("MA plot for {}".format(experiment))
+    axis.set_xlabel("M")
+    axis.set_ylabel("A")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "differential_expression.{}.joint_posterior.maplot.png".format(prefix)), bbox_inches="tight", dpi=300)
+    fig.savefig(os.path.join(results_dir, "differential_expression.{}.joint_posterior.maplot.svg".format(prefix)), bbox_inches="tight")
 
 
 def plot_deg_heatmaps(df, assignment, stats, prefix=""):
@@ -190,30 +334,7 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     from sklearn.decomposition import PCA
 
     import sys
-    sys.setrecursionlimit(1500)
-
-    # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
-    if "WNT" in prefix:
-        df2 = df.ix[
-            stats[
-                (stats["q_value"] < 0.05)  # filter by p-value
-            ].sort_values("q_value").head(500).index.tolist()
-        ]
-    else:
-        df2 = df.ix[
-            stats[
-                (stats["q_value"] < 0.05) &  # filter by p-value
-                (abs(stats["fold_change"]) > np.log2(1.5))  # filter by fold-change
-            ].sort_values("q_value").head(500).index.tolist()
-        ]
-    # save stats of diff genes
-    stats.ix[df2.index.tolist()].to_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index=True)
-
-    # get top 500 cells from each condition
-    df3 = df2[
-        df2[df2.columns[df2.columns.str.contains("st")]].sum().sort_values().tail(1500).index.tolist() +
-        df2[df2.columns[df2.columns.str.contains("un")]].sum().sort_values().tail(1500).index.tolist()
-    ]
+    sys.setrecursionlimit(5000)
 
     # remove opposite gRNA library
     if "TCR" in prefix:
@@ -221,12 +342,44 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     elif "WNT" in prefix:
         assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
 
+    # Add gRNA gene assignment to matrix
+    df = df.T
+    cell_names = df.index.str.lstrip("un|st")
+    cell_ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+
+    df["cell_ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in cell_ass], index=df.index).astype("category")
+    df["cell_sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
+
+    stats = pd.read_csv(
+        os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
+    )
+    # remove artitificial chromosomes
+    stats = stats[
+        (~stats.index.str.startswith("CTRL")) &
+        (~stats.index.str.contains("library_"))]
+
+    # fold_pivot = pd.read_csv(os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.diff_expr.csv".format(condition, gene)), index_col=0)
+
+    # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
+    if "WNT" in prefix:
+        df2 = df[stats[(stats["q_value"] < 0.05)].sort_values("q_value").head(500).index.tolist() + ["cell_ass", "cell_sti"]]  # filter by p-value
+    else:
+        df2 = df[stats[(abs(stats["cZ"]) > 1.5)].index.tolist() + ["cell_ass", "cell_sti"]]  # filter by corrected posterior
+    # save stats of diff genes
+    stats.ix[df2.index.tolist()].to_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index=True)
+
+    # get top 2000 cells from each condition
+    df2['sum'] = df2.sum(1)
+    big_cells = df2.groupby(['cell_sti'])['sum'].nlargest(1500).index.get_level_values(1)
+    df3 = df2.ix[big_cells].drop("sum", axis=1)
+
     g = sns.clustermap(
-        df3,
-        standard_scale=0,
-        cmap="YlGn",
-        col_colors=get_grna_colors(df3, assignment),
-        row_colors=get_foldchange_colors(df3, stats),
+        df3._get_numeric_data().T,
+        z_score=0,
+        # cmap="GnBu",
+        robust=True,
+        col_colors=get_grna_colors_new(df3, assignment),
+        row_colors=get_foldchange_colors_new(df3, stats),
         metric='correlation',
         xticklabels=False, yticklabels=False,
         figsize=(15, 7))
@@ -234,32 +387,29 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.svg".format(prefix)), bbox_inches="tight")
 
     # only assigned cells
-    cell_names = df3.columns.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else "Unassigned" for x in ass]
-    c = [i for i, x in enumerate(ass) if x not in ["Unassigned"]]
-
     g = sns.clustermap(
-        df3[c],
-        standard_scale=0,
-        cmap="YlGn",
-        col_colors=get_grna_colors(df3[c], assignment),
-        row_colors=get_foldchange_colors(df3[c], stats),
+        df3[df3["cell_ass"] != "Unassigned"]._get_numeric_data().T,
+        z_score=0,
+        # cmap="GnBu",
+        robust=True,
+        col_colors=get_grna_colors_new(df3[df3["cell_ass"] != "Unassigned"], assignment),
+        row_colors=get_foldchange_colors_new(df3[df3["cell_ass"] != "Unassigned"], stats),
         metric='correlation',
         xticklabels=False, yticklabels=False,
         figsize=(15, 7))
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.only_assigned.png".format(prefix)), bbox_inches="tight", dpi=300)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.clustermap.only_assigned.svg".format(prefix)), bbox_inches="tight")
 
-    # sort by stimulation order
-    df4 = df3.sort_index(axis=1)
+    # sort by stimulation order and gRNA order
+    df4 = df3.sort_values(["cell_sti", "cell_ass"])
 
     g = sns.clustermap(
-        df4,
-        standard_scale=0,
-        cmap="YlGn",
-        col_colors=get_grna_colors(df4, assignment),
-        row_colors=get_foldchange_colors(df4, stats),
+        df4._get_numeric_data().T,
+        z_score=0,
+        # cmap="GnBu",
+        robust=True,
+        col_colors=get_grna_colors_new(df4, assignment),
+        row_colors=get_foldchange_colors_new(df4, stats),
         metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
@@ -269,49 +419,15 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedcondition_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedcondition_heatmap.svg".format(prefix)), bbox_inches="tight")
 
-    #
-
-    # sort by stimulation order and gRNA order
-    cell_names = df3.columns.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else "Unassigned" for x in ass]
-    df3.loc["ass", :] = ass
-    df3.loc["sti", :] = [x[:2] for x in df3.columns]
-    order = df3.T[["sti", "ass"]].sort_values(["sti", "ass"]).index.tolist()
-    df3 = df3.drop(["sti", "ass"])
-    df3 = df3.astype(np.float64)
-
-    df4 = df3[order]
-
-    g = sns.clustermap(
-        df4,
-        standard_scale=0,
-        cmap="YlGn",
-        # center=np.log2(df4.mean().mean()),
-        col_colors=get_grna_colors(df4, assignment),
-        row_colors=get_foldchange_colors(df4, stats),
-        # robust=True,
-        metric='correlation',
-        row_cluster=True, col_cluster=False,
-        xticklabels=False, yticklabels=True,
-        figsize=(15, 7))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.sortedconditiongRNA_heatmap.svg".format(prefix)), bbox_inches="tight")
-
     # sorted the same but only assigned cells
-    cell_names = df4.columns.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else "Unassigned" for x in ass]
-    c = [i for i, x in enumerate(ass) if x not in ["Unassigned"]]
+    z_score = lambda x: (x - x.mean()) / x.std()
 
     g = sns.clustermap(
-        df4[c],
-        standard_scale=0,
-        cmap="YlGn",
-        col_colors=get_grna_colors(df4[c], assignment),
-        row_colors=get_foldchange_colors(df4[c], stats),
+        df4[df4["cell_ass"] != "Unassigned"]._get_numeric_data().T.apply(z_score, axis=1).apply(z_score, axis=0),
+        # z_score=0,
+        robust=True,
+        col_colors=get_grna_colors_new(df4[df4["cell_ass"] != "Unassigned"], assignment),
+        row_colors=get_foldchange_colors_new(df4[df4["cell_ass"] != "Unassigned"], stats),
         metric='correlation',
         row_cluster=True, col_cluster=False,
         xticklabels=False, yticklabels=True,
@@ -325,23 +441,12 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
 
     # Group by stimulation / gRNA, get mean expression
 
-    # use all cells for this
-    df4 = df2.copy().T
-
-    cell_names = df4.index.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    ass = [x if type(x) == str else "Unassigned" for x in ass]
-
-    df4["ass"] = ass
-    df4['ass'] = df4['ass'].astype("category")
-    df4["sti"] = [x[:2] for x in df4.index]
-    df4['sti'] = df4['sti'].astype("category")
-
-    df5 = df4.groupby(['sti', 'ass']).mean().T
+    # use all cells for this (go back to df2)
+    df5 = df2.drop("sum", axis=1).groupby(['cell_sti', 'cell_ass']).mean().T
 
     # report number of cells per condition & gRNA
     fig, axis = plt.subplots(1, figsize=(6, 12))
-    c = df4.groupby(['sti', 'ass']).apply(len).sort_values(ascending=False)
+    c = df2.drop("sum", axis=1).groupby(['cell_sti', 'cell_ass']).apply(len).sort_values(ascending=False)
     sns.barplot(c, c.index.to_series().str.join(" "), orient="horiz", ax=axis)
     axis.set_xscale('log')
     axis.set_xlabel('Number of cells (log)')
@@ -388,9 +493,9 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
 
     # Dimentionality reduction methods
     # try several
-    methods = [PCA, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE, MDS]
+    methods = [PCA, LocallyLinearEmbedding, Isomap, SpectralEmbedding, TSNE]
 
-    for name, matrix in [("groups", df5.T), ("cells", df3.T)]:
+    for name, matrix in [("groups", df5), ("cells", df3.T)]:
         for method in methods:
             print(name, method.__name__)
             model = method()
@@ -430,14 +535,20 @@ def plot_deg_heatmaps(df, assignment, stats, prefix=""):
             fig.savefig(os.path.join(results_dir, "differential_expression.{}.{}.{}.png".format(prefix, name, method.__name__)), bbox_inches="tight", dpi=300)
 
 
-def enrich_signature(degs, prefix=""):
+def enrich_signature(stats, prefix=""):
     """
     """
     # load stats of diff genes
-    degs = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index_col=0)
-    degs.index.name = "gene_name"
+    stats = pd.read_csv(
+        os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
+    )
+    stats.index.name = "gene_name"
+    # remove artitificial chromosomes
+    stats = stats[
+        (~stats.index.str.startswith("CTRL")) &
+        (~stats.index.str.contains("library_"))]
 
-    for d, name in [(degs, "_all_genes"), (degs[degs["fold_change"] > 0], "_up_genes"), (degs[degs["fold_change"] < 0], "_down_genes")]:
+    for d, name in [(degs, "_all_genes"), (degs[degs["Z"] > 0], "_up_genes"), (degs[degs["Z"] < 0], "_down_genes")]:
 
         enr = enrichr(d.reset_index())
         enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(prefix + name)), index=False, encoding="utf8")
@@ -459,10 +570,99 @@ def enrich_signature(degs, prefix=""):
             sns.despine(fig)
             fig.savefig(os.path.join(results_dir, "differential_expression.{}.enrichr.{}.svg".format(prefix + name, gene_set_library)), bbox_inches="tight")
 
+    # Fig 1c
+    fig, axis = plt.subplots()
+    sns.distplot(abs(stats["Z"]), kde=False, bins=100, ax=axis)
+    # axis.set_yscale("log")
+    fig.savefig(os.path.join(results_dir, "differential_expression.{}.posterior_distribution.svg".format(prefix + "_all_genes")), bbox_inches="tight")
 
-def assign_cells_to_signature(degs, df, assignment, prefix=""):
+
+def threshold_enrich_signature(stats, prefix=""):
     """
     """
+    # load stats of diff genes
+    stats = pd.read_csv(
+        os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
+    )
+    stats.index.name = "gene_name"
+    # remove artitificial chromosomes
+    stats = stats[
+        (~stats.index.str.startswith("CTRL")) &
+        (~stats.index.str.contains("library_"))]
+
+    deg_counts = list()
+
+    for t in np.arange(0.5, 5.0, 0.1):
+        sig = stats[abs(stats["cZ"]) > t]
+        for d, name in [
+                #  (sig, "_all_genes"),
+                (sig[sig["Z"] > 0], "_up_genes"), (sig[sig["Z"] < 0], "_down_genes")]:
+            deg_counts.append([t, name, d.shape[0]])
+            if d.shape[0] > 0:
+                enr = enrichr(d.reset_index())
+                enr.to_csv(os.path.join(results_dir, "enrichr", "differential_expression.{}.{}.enrichr.csv".format(prefix + name, t)), index=False, encoding="utf8")
+
+    deg_counts = pd.DataFrame(deg_counts)
+    deg_counts.columns = ["threshold", "direction", "gene_count"]
+
+    # plot counts of degs
+    fig, axis = plt.subplots(len(deg_counts["direction"].unique()), figsize=(6, 8), sharex=True)
+    for i, d in enumerate(deg_counts["direction"].unique()):
+        p = deg_counts[deg_counts["direction"] == d]
+        axis[i].plot(p['threshold'], p['gene_count'], label=d)
+        axis[i].set_title(d)
+    axis[1].set_ylabel("Number of DEGs")
+    axis[2].set_xlabel("threshold")
+    fig.savefig(os.path.join(results_dir, "enrichr", "gene_number.svg"), bbox_inches="tight")
+
+    # collect
+    enrichments = pd.DataFrame()
+    for t in np.arange(0.5, 5.0, 0.1):
+        sig = stats[abs(stats["cZ"]) > t]
+        for d, name in [(sig[sig["Z"] > 0], "_up_genes"), (sig[sig["Z"] < 0], "_down_genes")]:
+            try:
+                enr = pd.read_csv(os.path.join(results_dir, "enrichr", "differential_expression.{}.{}.enrichr.csv".format(prefix + name, t)))
+            except:
+                continue
+            enr["threshold"] = t
+            enr["name"] = name
+            enr["id"] = str(t) + "_" + name
+            enrichments = enrichments.append(enr)
+
+    # plot
+    for gene_set_library in enrichments["gene_set_library"].unique():
+        p = enrichments[enrichments["gene_set_library"] == gene_set_library]
+
+        for metric in ["p_value", "z_score", "combined_score"]:
+            enrichments_pivot = pd.pivot_table(p, index="description", columns="id", values=metric).fillna(0)
+
+            # plot
+            g = sns.clustermap(
+                enrichments_pivot.ix[enrichments_pivot.sum(1).sort_values().tail(50).index],
+                col_cluster=False,
+                figsize=(15, 15))
+            for item in g.ax_heatmap.get_yticklabels():
+                item.set_rotation(0)
+            for item in g.ax_heatmap.get_xticklabels():
+                item.set_rotation(90)
+            g.fig.savefig(os.path.join(results_dir, "enrichr", "enrichments.{}.{}.svg".format(gene_set_library, metric)), bbox_inches="tight")
+
+
+def assign_cells_to_signature(stats, df, assignment, prefix=""):
+    """
+    """
+    # get top 500 differential expressed (if significant) in top 2000 cells (by coverage)
+    if "WNT" in prefix:
+        stats = stats[(stats["q_value"] < 0.05)]  # filter by p-value
+    else:
+        stats = stats[(abs(stats["cZ"]) > 1.5)]  # filter by corrected posterior
+
+    # remove opposite gRNA library
+    if "TCR" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Wnt")]
+    elif "WNT" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
+
     group_means = pd.read_csv(
         os.path.join(results_dir, "differential_expression.{}.group_means.csv".format(prefix)),
         index_col=0,
@@ -471,8 +671,8 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
 
     # Get stimulation signature
     # 1. get mean expression of each group in signature gens
-    x1 = group_means["st", "CTRL"]
-    x2 = group_means["un", "CTRL"]
+    x1 = group_means["st", "CTRL"].ix[stats.index]
+    x2 = group_means["un", "CTRL"].ix[stats.index]
 
     # 2. get signature matrix
     # here, bounds are set to (-20, 20) so that the extremes of the signature represent -20% or 120% of the signature
@@ -483,9 +683,9 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     # 3. get signature value of each cell
     sigs = list()
     for i, cell in enumerate(df.columns):
-        if i % 20 == 0:
+        if i % 100 == 0:
             print(i)
-        sigs.append(best_signature_matrix(array=df.ix[group_means.index][cell], matrix=sign))
+        sigs.append(best_signature_matrix(array=df.ix[stats.index][cell], matrix=sign))
 
     # Aggregate by condition/gene
     df2 = df.copy().T
@@ -496,27 +696,31 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     df2["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df2.index).astype("category")
     df2["sti"] = pd.Series([x[:2] for x in df2.index], index=df2.index).astype("category")
 
-    df2 = df2[~df2["ass"].isin(["Unassigned", "Essential"])]
-
     # add signatures
     df2['signature'] = sigs
 
+    df2 = df2[~df2["ass"].isin(["Unassigned", "Essential"])]
+
     # Save clinical trait signatures for all samples
-    df2[["ass", "sti", "signature"]].to_csv(os.path.join(results_dir, "signatures.all_cells.{}.csv".format(prefix)))
-    df2 = pd.read_csv(os.path.join(results_dir, "signatures.all_cells.{}.csv".format(prefix)), index_col=0)
+    df2[["ass", "sti", "signature"]].to_csv(os.path.join(results_dir, "signatures.all_cells.{}scde.csv".format(prefix)))
+    df2 = pd.read_csv(os.path.join(results_dir, "signatures.all_cells.{}scde.csv".format(prefix)), index_col=0)
 
     # plot distibution
-    sigs_mean = df2.groupby(['sti', 'ass'])['signature'].median().sort_values()
+    sigs_mean = df2.groupby(['sti', 'ass'])['signature'].median().sort_values().reset_index().set_index(["sti", "ass"])
+    sigs_mean["n_cells"] = df2.groupby(['sti', 'ass']).apply(len)
+
+    # Filter out genes with less than the 5th percentile of cells
+    sigs_mean = sigs_mean[sigs_mean["n_cells"] >= 10]
 
     fig, axis = plt.subplots(1, figsize=(10, 8))
-    sns.stripplot(x=sigs_mean, y=sigs_mean.index, orient="horiz", ax=axis)
+    sns.stripplot(x=sigs_mean['signature'], y=sigs_mean.index, orient="horiz", ax=axis)
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.strip.svg".format(prefix)), bbox_inches="tight")
 
     # Given the known condition of each group, what is the deviation from that?
     # plot as rank of mean
     fig, axis = plt.subplots(1, figsize=(10, 8))
-    axis.scatter(sigs_mean.rank(ascending=False), sigs_mean)
+    axis.scatter(sigs_mean['signature'].rank(ascending=False), sigs_mean['signature'])
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.rank.svg".format(prefix)), bbox_inches="tight")
 
@@ -547,7 +751,7 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot.sorted_un.svg".format(prefix)), bbox_inches="tight")
 
     fig, axis = plt.subplots(1, figsize=(16, 8))
-    sns.violinplot(x="ass", y="signature", hue="sti", data=df2, ax=axis)
+    sns.violinplot(x="ass", y="signature", hue="sti", cut=0, data=df2, ax=axis)
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.mean_group_signature.violinplot2.svg".format(prefix)), bbox_inches="tight")
 
@@ -556,8 +760,8 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     # Group by stimulation / gRNA, get mean expression
 
     # use all cells for this
-    diffs = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index_col=0)
-    df4 = df.copy().T[diffs.index]
+    # diffs = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.differential_genes.csv".format(prefix)), index_col=0)
+    df4 = df.copy().T[stats.index].dropna()
 
     cell_names = df4.index.str.lstrip("un|st")
     ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
@@ -568,22 +772,21 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     df4 = df4[~df4["ass"].isin(["Unassigned", "Essential"])]
 
     df5 = df4.groupby(['sti', 'ass']).mean()
+    df5 = df5.drop(["Unassigned", "Essential"], level=1)
 
     # Annotate with median signature and number of cells and save
-    df5["signature"] = sigs_mean
+    df5["signature"] = sigs_mean['signature']
     df5["n_cells"] = df4.groupby(['sti', 'ass']).apply(len).sort_values(ascending=False)
+    df5 = df5[df5["n_cells"] >= 10]
     df5.to_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index=True)
     df5 = pd.read_csv(os.path.join(results_dir, "differential_expression.{}.group_means.signature_cells_annotated.csv".format(prefix)), index_col=[0, 1], skipinitialspace=True)
 
-    # Filter out genes with less than the 5th percentile of cells
-    df5 = df5[df5["n_cells"] >= np.percentile(df5['n_cells'], 5)]
-    df5 = df5[df5["n_cells"] >= 10]
-
     # cluster
     g = sns.clustermap(
-        df5.T.drop(['signature', 'n_cells']), z_score=0,
-        col_colors=get_group_colors(df5.T, assignment),
-        row_colors=get_foldchange_colors(df5.T, stats),
+        df5.drop(['signature', 'n_cells'], axis=1).T,
+        z_score=0,
+        col_colors=get_group_colors(df5.drop(['signature', 'n_cells'], axis=1).T, assignment),
+        row_colors=get_foldchange_colors_new(df5.drop(['signature', 'n_cells'], axis=1), stats),
         metric='correlation',
         row_cluster=True, col_cluster=True,
         xticklabels=True, yticklabels=True,
@@ -593,25 +796,43 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
     g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.svg".format(prefix)), bbox_inches="tight")
+    # g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.clustered.svg".format(prefix)), bbox_inches="tight")
 
-    # sort by signature
-    p = df5.sort_values("signature").T.drop(['signature', 'n_cells'])
-    p = p[[i for i, x in enumerate(p.columns.get_level_values(1)) if x not in ["Essential", "Unassigned"]]]
+    # cluster groups, sort genes
+    gene_order = (df5.drop(['signature', 'n_cells'], axis=1).ix["st"].median() / df5.drop(['signature', 'n_cells'], axis=1).ix["un"].median()).sort_values(ascending=False).index
+
     g = sns.clustermap(
-        p, standard_scale=0,
-        col_colors=get_group_colors(p, assignment),
-        row_colors=get_foldchange_colors(p, stats),
+        df5[gene_order].T.dropna(), z_score=0,
+        col_colors=get_group_colors(df5[gene_order].T, assignment),
+        row_colors=get_foldchange_colors_new(df5[gene_order], stats),
         metric='correlation',
-        row_cluster=True, col_cluster=False,
+        row_cluster=False, col_cluster=True,
         xticklabels=True, yticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sorted_signature.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sorted_signature.svg".format(prefix)), bbox_inches="tight")
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sorted_genes_clustered_groups.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # sort by signature
+    p = df5.sort_values("signature").T.drop(['signature', 'n_cells']).ix[gene_order]
+    p = p[[i for i, x in enumerate(p.columns.get_level_values(1)) if x not in ["Essential", "Unassigned"]]]
+
+    clust = sns.clustermap(
+        p, z_score=0,
+        col_colors=get_group_colors(p, assignment),
+        row_colors=get_foldchange_colors_new(p.T, stats),
+        metric='correlation',
+        row_cluster=False, col_cluster=False,
+        xticklabels=True, yticklabels=True,
+        figsize=(8.62948158106742, 6))
+    for item in clust.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in clust.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    clust.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sorted_signature.png".format(prefix)), bbox_inches="tight", dpi=300)
+    clust.fig.savefig(os.path.join(results_dir, "differential_expression.{}.group_means.sorted_signature.svg".format(prefix)), bbox_inches="tight")
 
     # Strip plot of number of cells
     p = df5.sort_values("signature").T.drop(['signature'])
@@ -624,13 +845,48 @@ def assign_cells_to_signature(degs, df, assignment, prefix=""):
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "signatures.all_cells.{}.cells_per_group.bubbles.svg".format(prefix)), bbox_inches="tight")
 
+    # Single-cell matrix sorted in same way as above
+    p_all = df4.reset_index().set_index(["sti", "ass"])
+    # order gRNAs
+    p_all = p_all.ix[p.columns]
+    # order genes
+    p_all = p_all[[t.get_text() for t in clust.ax_heatmap.get_yticklabels()] + ["index"]]
+
+    # down
+    gs = stats[stats["Z"] < 0].sort_values("Z").index.tolist()
+    # up
+    gs += stats[stats["Z"] > 0].sort_values("Z", ascending=False).index.tolist()
+    p_all = p_all[gs + ["index"]]
+    # p_all = p_all[diffs.sort_values("fold_change").index.tolist() + ["index"]]
+
+    # for cmap in ["YlGn"]:  # , "YlOrBr", "GnBu", "Greys_r", "Oranges", "ocean_r"]:
+    g = sns.clustermap(
+        p_all.drop("index", axis=1),
+        # standard_scale=0,
+        z_score=1,
+        # cmap=cmap,
+        # vmin=0.25,
+        # col_colors=get_foldchange_colors(p_all.set_index("index").T, stats),
+        row_colors=get_grna_colors(p_all.set_index("index").T, assignment),
+        metric='correlation',
+        row_cluster=False, col_cluster=False,
+        xticklabels=True, yticklabels=False,
+        figsize=(6, 8.62948158106742))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    #g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.assigned_cells.sorted_signature.{}.png".format(prefix, cmap)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.assigned_cells.sorted_signature.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "differential_expression.{}.assigned_cells.sorted_signature.svg".format(prefix)), bbox_inches="tight")
+
     #
 
     # Calculate deviation from CTRL for each stimulation
-    s = (sigs_mean.ix['st'] - sigs_mean.ix['st', "CTRL"]).sort_values(ascending=False)
-    u = (sigs_mean.ix['un'] - sigs_mean.ix['un', "CTRL"]).sort_values(ascending=False)
-    sl = np.log2(sigs_mean.ix['st'] / sigs_mean.ix['st', "CTRL"]).sort_values(ascending=False)
-    ul = np.log2(sigs_mean.ix['un'] / sigs_mean.ix['un', "CTRL"]).sort_values(ascending=False)
+    s = (sigs_mean.ix['st'] - sigs_mean.ix['st', "CTRL"])['signature'].sort_values(ascending=False)
+    u = (sigs_mean.ix['un'] - sigs_mean.ix['un', "CTRL"])['signature'].sort_values(ascending=False)
+    sl = np.log2(sigs_mean.ix['st'] / sigs_mean.ix['st', "CTRL"])['signature'].sort_values(ascending=False)
+    ul = np.log2(sigs_mean.ix['un'] / sigs_mean.ix['un', "CTRL"])['signature'].sort_values(ascending=False)
 
     fig, axis = plt.subplots(2, figsize=(8, 8))
     sns.barplot(s, s.index, orient="horiz", order=s.index, ax=axis[0])
@@ -765,15 +1021,20 @@ def explore_knockouts(df, assignment, prefix=""):
     fig, axis = plt.subplots(2, figsize=(14, 8))
     sns.violinplot(x="sti", y="GATA3", data=df2, hue="ass")
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "knockout_combination..{}.mean_expression.own_knockouts.GATA3_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.GATA3_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
     fig, axis = plt.subplots(2, figsize=(14, 8))
     sns.violinplot(x="sti", y="ETS1", data=df2, hue="ass")
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "knockout_combination..{}.mean_expression.own_knockouts.ETS1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.ETS1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
     fig, axis = plt.subplots(2, figsize=(14, 8))
     sns.violinplot(x="sti", y="RUNX1", data=df2, hue="ass")
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "knockout_combination..{}.mean_expression.own_knockouts.RUNX1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.RUNX1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
+    # Also IL2
+    fig, axis = plt.subplots(2, figsize=(14, 8))
+    sns.violinplot(x="sti", y="IL2", data=df2, hue="ass")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.IL2_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
 
     #
 
@@ -855,6 +1116,7 @@ def explore_knockouts(df, assignment, prefix=""):
 
         enrichments = enrichments.append(enr)
     enrichments.to_csv(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)), index=False, encoding="utf8")
+    enrichments = pd.read_csv(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)))
 
     for gene_set_library in enrichments["gene_set_library"].unique():
 
@@ -877,6 +1139,431 @@ def explore_knockouts(df, assignment, prefix=""):
             item.set_rotation(90)
         g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.{}.png".format(prefix, gene_set_library)), bbox_inches="tight", dpi=300)
         # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)), bbox_inches="tight")
+
+
+def signature_scde(assignment, df):
+    # Cluster groups on genes
+    df = df.T
+    # Annotate cells with stimulus and gRNA assignment
+    cell_names = df.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+
+    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
+    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
+
+    # read in diff
+    degs = pd.read_csv(
+        os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
+    )
+    fold_pivot = pd.read_csv(os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.diff_expr.csv".format(condition, gene)), index_col=0)
+
+    # Filter out gRNAs
+    degs = degs[~degs.index.str.contains("library|CTRL")]
+
+    # get top N differential genes
+    genes = degs[abs(degs["cZ"]) > 1.5].index.tolist()
+
+    df2 = df[df["ass"] == "CTRL"]
+    pos = df2[df2["sti"] == "st"].drop(['ass', 'sti'], axis=1).mean(0)
+    neg = df2[df2["sti"] == "un"].drop(['ass', 'sti'], axis=1).mean(0)
+
+    # Plot scatter
+    fig, axis = plt.subplots(2)
+    axis[0].scatter(  # all genes
+        neg.ix[neg.index[~neg.index.isin(genes)]],
+        pos.ix[pos.index[~pos.index.isin(genes)]],
+        s=5,
+        color="grey",
+        alpha=0.1
+    )
+    axis[0].scatter(
+        neg.ix[genes],
+        pos.ix[genes],
+        s=10,
+        color="orange",
+        alpha=0.5
+    )
+    # Plot MA
+    axis[1].scatter(  # all genes
+        (neg.ix[neg.index[~neg.index.isin(genes)]] * pos.ix[pos.index[~pos.index.isin(genes)]]) / 2.,
+        degs.loc[degs.index[~degs.index.isin(genes)], "cZ"],
+        s=5,
+        color="grey",
+        alpha=0.1
+    )
+    axis[1].scatter(
+        (neg.ix[genes] * pos.ix[genes]) / 2.,
+        degs.loc[genes, "cZ"],
+        s=10,
+        color="orange",
+        alpha=0.5
+    )
+
+    # Cluster on fold-changes
+    g = sns.clustermap(
+        fold_pivot.ix[genes].dropna(),
+        # robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.fold_change.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # Cluster on original expression
+    g = sns.clustermap(
+        df.ix[genes].dropna(),
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=False,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.expression.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g = sns.clustermap(
+        fold_pivot.ix[genes].corr(),
+        metric="euclidean",
+        row_cluster=True, col_cluster=True,
+        yticklabels=True, xticklabels=False,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.expression.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # Cluster groups on genes
+    df = df.T
+    # Annotate cells with stimulus and gRNA assignment
+    cell_names = df.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+
+    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
+    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
+
+    df2 = df[~df["ass"].isin(["Unassigned", "Essential"])]
+
+    # get condition/gene mean expression for every gene
+    group_means = df2.groupby(["sti", "ass"]).mean().dropna().T
+
+    # cluster mean gene expression
+    g = sns.clustermap(
+        group_means.ix[genes].dropna(),
+        z_score=0,
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    # correlation
+    g = sns.clustermap(
+        group_means.ix[genes].dropna().corr(),
+        row_cluster=True, col_cluster=True,
+        yticklabels=True, xticklabels=False,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # cluster
+    g = sns.clustermap(
+        group_means["un"].ix[genes].dropna(),
+        z_score=0,
+        metric="euclidean",
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.unstimulated.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g = sns.clustermap(
+        group_means["st"].ix[genes].dropna(),
+        z_score=0,
+        metric="euclidean",
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.stimulated.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+
+def gather_scde(assignment, N=250):
+    """
+    """
+    fold = pd.DataFrame()
+
+    # remove opposite gRNA library
+    if "TCR" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Wnt")]
+    elif "WNT" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
+
+    for condition in ["unstimulated"]:
+        for gene in assignment[assignment['experiment_group'] == experiment]["group"].unique()[2:-7]:
+            if gene in ["Essential", "CTRL"]:
+                continue
+
+            # Read up deg
+            print(gene)
+            try:
+                degs = pd.read_csv(
+                    os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.CROP-seq_Jurkat_TCR_{}.{}.diff_expr.csv".format(condition, gene))
+                )
+            except:
+                print("Skipping {} {}".format(condition, gene))
+                continue
+            degs["condition"] = condition
+            degs["gene"] = gene
+            fold = fold.append(degs)
+
+            enr = enrichr(degs.reset_index().rename(columns={"index": "gene_name"}).head(N))
+            enr.to_csv(os.path.join(
+                results_dir,
+                "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.{}.{}.enrichr.diff_expr.csv".format(condition, gene)), index=False, encoding="utf8")
+
+    # Filter out gRNAs
+    fold = fold[~fold.index.str.contains("library")]
+
+    # get top N differential genes
+    fold["absZ"] = abs(fold["Z"])
+    g = fold.groupby(['condition', 'gene'])['absZ'].nlargest(150)
+    genes = g.index.get_level_values(2).unique()
+
+    fold["id"] = fold["condition"] + fold["gene"]
+
+    # create pivot table of fold-changes
+    fold_pivot = pd.pivot_table(fold.drop_duplicates().reset_index(), index="index", columns="id", values="Z").dropna()
+    fold_pivot.to_csv(os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.diff_expr.csv".format(condition, gene)), index=True)
+
+    # Cluster on fold-changes
+    g = sns.clustermap(
+        fold_pivot.ix[genes].dropna(),
+        # robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        # metric="correlation",
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.fold_change.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # Cluster on original expression
+    g = sns.clustermap(
+        df.ix[genes].dropna()[np.random.choice(df.columns, 2000)],
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=False,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.expression.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g = sns.clustermap(
+        fold_pivot.ix[genes].corr(),
+        # metric="euclidean",
+        row_cluster=True, col_cluster=True,
+        yticklabels=True, xticklabels=False,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.expression.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # Cluster groups on genes
+    df = df.T
+    # Annotate cells with stimulus and gRNA assignment
+    cell_names = df.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+
+    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
+    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
+
+    df2 = df[~df["ass"].isin(["Unassigned", "Essential"])]
+
+    # get condition/gene mean expression for every gene
+    group_means = df2.groupby(["sti", "ass"]).mean().dropna().T
+
+    # cluster mean gene expression
+    g = sns.clustermap(
+        group_means.ix[genes].dropna(),
+        z_score=0,
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    # correlation
+    g = sns.clustermap(
+        group_means.ix[genes].dropna().corr(),
+        row_cluster=True, col_cluster=True,
+        yticklabels=True, xticklabels=False,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # cluster
+    g = sns.clustermap(
+        group_means["un"].ix[genes].dropna(),
+        z_score=0,
+        metric="euclidean",
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.unstimulated.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g = sns.clustermap(
+        group_means["st"].ix[genes].dropna(),
+        z_score=0,
+        metric="euclidean",
+        robust=True,
+        row_cluster=True, col_cluster=True,
+        yticklabels=False, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.stimulated.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+
+    # Cluster enrichments
+    enrichments = pd.DataFrame()
+    for condition in ["stimulated", "unstimulated"]:
+        for gene in assignment[assignment['experiment_group'] == experiment]["group"].unique():
+            if gene in ["Essential", "CTRL"]:
+                continue
+            # Read up enrichments
+            try:
+                enr = pd.read_csv(os.path.join(
+                    results_dir,
+                    "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.{}.{}.enrichr.diff_expr.csv".format(condition, gene)), encoding="utf8")
+            except:
+                print("Skipping {} {}".format(condition, gene))
+                continue
+            enr["condition"] = condition
+            enr["gene"] = gene
+            enrichments = enrichments.append(enr)
+    enrichments["id"] = enrichments["gene"] + enrichments["condition"]
+    enrichments.to_csv(os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.csv"), index=False, encoding="utf8")
+    enrichments = pd.read_csv(os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.csv"), encoding="utf8")
+
+    for gene_set_library in enrichments["gene_set_library"].unique():
+
+        d = enrichments[enrichments["gene_set_library"] == gene_set_library]
+
+        d_ = pd.pivot_table(d, index="description", columns="id", values="combined_score")
+
+        # cluster
+        g = sns.clustermap(
+            # terms enriched in most knockouts
+            d_.ix[d_.mean(1).sort_values().tail(100).index].fillna(0),
+            # most varible terms
+            # d_.ix[(np.nanstd(d_, 1) / d_.sum(1)).sort_values().tail(100).index].fillna(0),
+            # z_score=0,
+            robust=True,
+            row_cluster=True, col_cluster=True,
+            xticklabels=True, yticklabels=True,
+            figsize=(15, 15))
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        g.fig.savefig(os.path.join(
+            results_dir,
+            "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.{}.svg".format(gene_set_library)), bbox_inches="tight")
+        g.fig.savefig(os.path.join(
+            results_dir,
+            "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.{}.pdf".format(gene_set_library)), bbox_inches="tight")
+
+        d_ = pd.pivot_table(d, index="description", columns="id", values="p_value")
+
+        # cluster
+        g = sns.clustermap(
+            # terms enriched in most knockouts
+            d_.ix[d_.mean(1).sort_values().head(100).index].fillna(1),
+            # most varible terms
+            # d_.ix[(np.nanstd(d_, 1) / d_.sum(1)).sort_values().head(100).index].fillna(1),
+            # z_score=0,
+            robust=True,
+            row_cluster=True, col_cluster=True,
+            xticklabels=True, yticklabels=True,
+            figsize=(15, 15))
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        g.fig.savefig(os.path.join(
+            results_dir,
+            "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.{}.p_value.svg".format(gene_set_library)), bbox_inches="tight")
+        g.fig.savefig(os.path.join(
+            results_dir,
+            "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.{}.p_value.pdf".format(gene_set_library)), bbox_inches="tight")
+
+
+def plot_genes():
+    """
+    """
+    genes = {
+        "Cytokines/effector molecules": ["IL2", "TNF", "LTA", "LTB", "GZMB", "IL3", "IL6"],
+        "Surface": ["CXCL8", "IL2RA", "CD40LG", "CXCR4", "CD69", "CD83", "TNFRSF4"],
+        "maybe chemokines": ["IL8", "CCL4", "CCL3", "CCL2", "CCL1"],
+        "other": ["DUSP2", "DUSP5", "VGF", "CSF2", "BIRC3"],
+    }
+    # matrices
+    # raw counts
+    exp = pd.read_pickle(os.path.join(results_dir, "digital_expression.{}genes.{}.pickle".format(n_genes, experiment)))
+
+    # raw group counts
+    exp2 = exp.to_dense().ix[[y for x in genes.values() for y in x]].dropna().T
+
+    cell_names = exp2.index.str.lstrip("sti:|unsti:")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    exp2['ass'] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=exp2.index).astype("category")
+    exp2["sti"] = pd.Series([x[:2] for x in exp2.index], index=exp2.index).astype("category")
+    exp_groups = exp2.groupby(['sti', 'ass']).mean().T
+    # Filter out genes with less than 10 cells and save
+    c = exp2.groupby(['sti', 'ass']).apply(len)
+    exp_groups = exp_groups[c[c >= 10].index]
+    exp_groups.to_csv(os.path.join(results_dir, "raw_expression.{}.group_means.csv".format(prefix)), index=True)
+
+    # norm counts
+    norm = matrix_norm.to_dense()
+    # norm group means
+    norm2 = norm.ix[[y for x in genes.values() for y in x]].dropna().T
+
+    cell_names = norm2.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+    norm2['ass'] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=norm2.index).astype("category")
+    norm2["sti"] = pd.Series([x[:2] for x in norm2.index], index=norm2.index).astype("category")
+    norm_groups = norm2.groupby(['sti', 'ass']).mean().T
+    # Filter out genes with less than 10 cells and save
+    c = norm2.groupby(['sti', 'ass']).apply(len)
+    norm_groups = norm_groups[c[c >= 10].index]
+    norm_groups.to_csv(os.path.join(results_dir, "norm_expression.{}.group_means.csv".format(prefix)), index=True)
+
+    # filter for groups with more than n cells
+    c = df2.groupby(["sti", "ass"]).apply(len)
+    group_means = group_means[c[c >= np.percentile(c, 5)].index]
+
+    for m, name in [
+            (exp_groups, "exp_groups"), (norm_groups, "norm_groups"),  # groups of cells
+            # (exp, "counts"), (df, "norm")  # all cells
+            ]:
+        # take top N covered cells
+        g = sns.clustermap(
+            m,
+            metric="correlation",
+            z_score=0)
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        g.fig.savefig(os.path.join(
+            results_dir,
+            "gene_expression.500genes.{}.{}.clustermap.svg".format(prefix, name)), bbox_inches="tight")
 
 
 def classify_unassigned(df, assignment, prefix=""):
@@ -933,10 +1620,12 @@ def classify_unassigned(df, assignment, prefix=""):
 
     scores = pd.DataFrame(scores, columns=sorted(train['ass'].unique()), index=train.index[range(len(scores))])
     scores["truth"] = train["ass"].ix[range(len(scores))]
-    scores.to_csv(os.path.join(results_dir, "classification.diff_genes.csv"))
+    scores.to_csv(os.path.join(results_dir, "classification.all_genes.probabilities.csv"))
 
     # Plot mean group probability for each label
-    sns.heatmap(scores.groupby("truth").mean(), cmap="Greens", square=True)
+    fig, axis = plt.subplots(1, figsize=(15, 15))
+    sns.heatmap(scores.groupby("truth").mean(), cmap="Greens", square=True, ax=axis)
+    fig.savefig(os.path.join(results_dir, "classification.all_genes.group_mean_probabilities.svg"), bbox_inches="tight")
 
     # Make ROC curve (for some classes only maybe)
     roc_curve(train["ass"].ix[range(scores)], scores)
@@ -964,6 +1653,31 @@ def get_grna_colors(d, assignment):
     gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
 
     return [stimulation_colors, gRNA_colors]
+
+
+def get_grna_colors_new(d, assignment):
+    from matplotlib.colors import colorConverter
+    # make color dict
+    pallete = sns.color_palette("colorblind") * 10
+    gRNA_color_dict = dict(zip(assignment["group"].unique(), pallete))
+    gRNA_color_dict["CTRL"] = "#228B22"
+    gRNA_color_dict["Essential"] = "#B22222"
+    gRNA_color_dict["Unassigned"] = "grey"
+
+    # match colors with matrix
+    stimulation_colors = ["#B22222" if "un" in x else "#228B22" for x in d["cell_sti"]]
+    gRNA_colors = [gRNA_color_dict[x] for x in d["cell_ass"]]
+
+    # convert to rgb
+    stimulation_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in stimulation_colors]
+    gRNA_colors = [colorConverter.to_rgb(x) if type(x) is str else x for x in gRNA_colors]
+
+    return [stimulation_colors, gRNA_colors]
+
+
+def get_foldchange_colors_new(d, s):
+    fold_change_colors = ["#B22222" if x > 0 else "#333399" for x in s.ix[d.columns]["Z"]]
+    return fold_change_colors
 
 
 def get_group_colors(d, assignment):
@@ -1044,9 +1758,10 @@ def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
             "WikiPathways_2016",
             "Reactome_2016",
             "BioCarta_2016",
-            "Disease_Perturbations_from_GEO_down",
-            "Disease_Perturbations_from_GEO_up",
-            "TF-LOF_Expression_from_GEO"
+            "NCI-Nature_2016",
+            # "Disease_Perturbations_from_GEO_down",
+            # "Disease_Perturbations_from_GEO_up",
+            # "TF-LOF_Expression_from_GEO"
         ]
 
     results = pd.DataFrame()
@@ -1098,6 +1813,154 @@ def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
         results = results.append(res, ignore_index=True)
 
     return results
+
+
+def Wnt_targets():
+    """
+    """
+
+    # get Wnt target genes
+    wnt_targets = pd.read_csv(os.path.join("metadata", "wnt_qPCR_assay_genes.csv")).squeeze()
+
+    # single-cell clustering
+    df = matrix_norm.to_dense()
+    df2 = df.ix[wnt_targets].dropna()
+    # add noise
+    noise = np.random.normal(0, 0.0000001, df2.shape[0] * df2.shape[1]).reshape(df2.shape)
+    df3 = df2 + noise
+    g = sns.clustermap(
+        df3,
+        xticklabels=False,
+        col_colors=["green" if "st" in x else "red" for x in df.columns],
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.single_cell.clustered.png"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(
+        df3[sorted(df3.columns)],
+        xticklabels=False,
+        col_cluster=False,
+        col_colors=["green" if "st" in x else "red" for x in df.columns],
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.single_cell.sorted.png"), dpi=300, bbox_inches="tight")
+
+    # z-scored
+    g = sns.clustermap(
+        df3,
+        xticklabels=False,
+        col_colors=["green" if "st" in x else "red" for x in df.columns],
+        z_score=0,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.single_cell.clustered.zscore.png"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(
+        df3[sorted(df3.columns)],
+        xticklabels=False,
+        col_cluster=False,
+        col_colors=["green" if "st" in x else "red" for x in df.columns],
+        z_score=0,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.single_cell.sorted.zscore.png"), dpi=300, bbox_inches="tight")
+
+    # group by target clustering
+    if "TCR" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Wnt")]
+    elif "WNT" in prefix:
+        assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
+
+    cell_names = df.index.str.lstrip("un|st")
+    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
+
+    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
+    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
+
+    df2 = df[~df["ass"].isin(["Unassigned", "Essential"])]
+
+    # get condition/gene mean expression for every gene
+    group_means = df2.groupby(["sti", "ass"]).mean().dropna().T
+
+    group_means2 = group_means.ix[wnt_targets].dropna()
+
+    g = sns.clustermap(
+        group_means2,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.group_means.clustered.png"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(
+        group_means2[sorted(group_means2.columns)],
+        col_cluster=False,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.group_means.sorted.png"), dpi=300, bbox_inches="tight")
+
+    # z-scored
+    g = sns.clustermap(
+        group_means2,
+        z_score=0,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.group_means.clustered.zscore.png"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(
+        group_means2[sorted(group_means2.columns)],
+        col_cluster=False,
+        z_score=0,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.group_means.sorted.zscore.png"), dpi=300, bbox_inches="tight")
+
+    # CTRL only
+    g = sns.clustermap(
+        pd.DataFrame([group_means2['st', 'CTRL'], group_means2['un', 'CTRL']]).T,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.group_means.controls.clustered.png"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(
+        pd.DataFrame([group_means2['st', 'CTRL'], group_means2['un', 'CTRL']]).T,
+        z_score=0,
+        metric="correlation"
+    )
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "WNT.target_genes.group_means.controls.clustered.zscore.png"), dpi=300, bbox_inches="tight")
 
 
 def big_heatmap(x, assignment):
@@ -1165,53 +2028,45 @@ def big_heatmap(x, assignment):
     return fig
 
 
-root_dir = "."
-results_dir = os.path.join(root_dir, "results")
-sample_annotation = pd.read_csv(os.path.join(root_dir, "metadata/annotation.csv"))
+prj = Project(os.path.join("metadata", "config.separate.yaml"))
+prj.add_sample_sheet()
+prj.paths.results_dir = results_dir = os.path.join("results")
+
+sample_annotation = prj.sheet.df
 
 # get guide annotation
-guide_annotation = os.path.join(root_dir, "metadata/guide_annotation.csv")
+guide_annotation = os.path.join("metadata", "guide_annotation.csv")
 guide_annotation = pd.read_csv(guide_annotation)
 
-reads = pd.read_csv(os.path.join(results_dir, "guide_cell_quantification.all.csv"))
-scores = pd.read_csv(os.path.join(results_dir, "guide_cell_scores.all.csv"))
-assignment = pd.read_csv(os.path.join(results_dir, "guide_cell_assignment.all.csv"))
-
-# group gRNAs per gene or control group
-assignment = assignment.set_index("assignment")
-assignment["group"] = pd.np.nan
-assignment.loc[assignment.index.str.contains("CTRL"), "group"] = "CTRL"
-assignment.loc[assignment.index.str.contains("Essential"), "group"] = "Essential"
-assignment = assignment.reset_index()
-tr = assignment[assignment["group"].isnull()]['assignment'].str.extract(".*_(.*)_.*")
-assignment.loc[tr.index, "group"] = tr
-
-# group by experiment (without stimulation condition)
-assignment["experiment_group"] = assignment["experiment"].str.extract("^(.*)_.*$")
-
 n_genes = 500
-experiment = "CROP-seq_Jurkat_TCR"
-prefix = experiment + "_stimulation.allcells"
-method = "mannwhitney"
+experiment, rows = prj.sheet.df[prj.sheet.df['sample_name'].str.contains("ND")].groupby(['experiment']).groups.items()[0]
+
+
+s = os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix))
+stats = pd.read_csv(s, index_col=0)
 
 # get expression
 for n_genes in [500]:
-    for experiment in ["CROP-seq_Jurkat_TCR", "CROP-seq_HEK293T_4_WNT", "CROP-seq_HEK293T_6_WNT"]:
+    for experiment, rows in prj.sheet.df[prj.sheet.df['sample_name'].str.contains("ND")].groupby(['experiment']):
         print(experiment)
 
-        # exp = pd.read_csv(os.path.join(results_dir, "digital_expression.{}genes.{}.csv".format(n_genes, experiment)), index=True).to_sparse(fill_value=0)
-        exp = pd.read_pickle(os.path.join(results_dir, "digital_expression.{}genes.{}.pickle".format(n_genes, experiment)))
+        prefix = experiment + "_stimulation.allcells"
+
+        reads = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)))
+        scores = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_scores.all.csv".format(experiment)))
+        assignment = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)))
+
+        exp = pd.read_hdf(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.hdf5".format(experiment, n_genes)), "exp_matrix")
 
         # Filter matrix
-        cells_per_gene = exp.apply(lambda x: (x > 2).sum(), axis=1)
-        genes_per_cell = exp.apply(lambda x: (x > 2).sum(), axis=0)
+        cells_per_gene = exp.apply(lambda x: (x >= 3).sum(), axis=1)
+        genes_per_cell = exp.apply(lambda x: (x >= 3).sum(), axis=0)
         matrix = exp[cells_per_gene > 20]
         matrix = matrix[exp.columns[genes_per_cell >= 100]]
 
         #
 
         # Normalize
-
         # Approach 1:
         # normalize by total
         matrix_norm = normalize(matrix, experiment=experiment, kind="total")
@@ -1219,9 +2074,9 @@ for n_genes in [500]:
         # Approach 2:
         # regress out based on total number and MT-genes using Seurat
         matrix_norm = normalize(matrix, kind="seurat")
-        matrix_norm = pd.read_csv(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.csv".format(experiment)), index_col=0).to_sparse(fill_value=0)
-        matrix_norm.to_pickle(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.pickle".format(experiment)))
-        matrix_norm = pd.read_pickle(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.pickle".format(experiment)))
+
+        hdf5_file = os.path.join(results_dir, "{}.digital_expression.{}genes.seurat_regressed.h5".format(experiment, n_genes))
+        matrix_norm = read_seurat_hdf5(hdf5_file, assignment)
 
         #
 
@@ -1330,7 +2185,12 @@ for n_genes in [500]:
         # Plot difference/deviation from CTRL for genes:
         # a) of the relevant pathway or
         # b) any differentially expressed gene from the one vs all or one vs CTRL comparisons.
+        # b1) with MannU test
         explore_knockouts(matrix_norm.to_dense(), assignment, prefix=prefix)
+        # b2) with scde
+        gather_scde()
+        explore_knockouts_scde(, assignment
+
         # Plot the difference between stimulated/unstimulated for same genes
 
         # B.
