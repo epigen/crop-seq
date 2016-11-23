@@ -215,6 +215,11 @@ stats["DigitalExpression_500genes total_used_reads %"] = (stats["DigitalExpressi
 stats["surviving filtering %"] = (stats["STAR Number of input reads"] / stats["input_file read1"].astype(float)) * 100
 stats["Alignment rate"] = stats["STAR Uniquely mapped reads %"] + stats["STAR % of reads mapped to multiple loci"]
 
+odds = False
+if 'total_cell_estimation' in stats.columns:
+    odds = True
+    stats["500genes change_observed_expected number_cells"] = (stats["DigitalExpression_500genes number_cells"] / stats['total_cell_estimation'].astype(float)) * 100
+
 
 # select some stats
 
@@ -243,6 +248,8 @@ g2 = [
     # efficiency
     "DigitalExpression_500genes total_used_reads %",
     "DigitalExpression_500genes percent_unique_umis"]
+if odds:
+    g2 += ["500genes change_observed_expected number_cells"]
 
 g3 = [
     # transcriptome
@@ -368,67 +375,75 @@ fig.savefig(os.path.join(results_dir, "stats.selected.bubbles.svg"), bbox_inches
 #
 
 
-# Figure 1g
-exp_counts = pd.read_csv(os.path.join("/home/arendeiro/scratch/dropseq_runs/CROPseq1_pool2_old", "digital_expression.summary.100genes.tsv"), sep="\t", skiprows=2)
-exp_counts = exp_counts.drop("NUM_TRANSCRIPTS", axis=1).set_index("CELL_BARCODE").squeeze()
-reads = pd.read_csv(os.path.join("/home/arendeiro/scratch/dropseq_runs/CROPseq1_pool2_old", "quantification", "guide_cell_quantification.csv"))
+# Figure 1i
 
-# Assign
-# unique reads per cell
-u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
-# filter out reads in wrong strand
-u = u[u['strand_agreeement'] == 1]
-# get unique reads per cell
-u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
+for sample in prj.samples:
+    try:
+        exp_counts = pd.read_csv(os.path.join(sample.paths.sample_root, "digital_expression.summary.100genes.tsv"), sep="\t", skiprows=2)
+        exp_counts = exp_counts.drop("NUM_TRANSCRIPTS", axis=1).set_index("CELL_BARCODE").squeeze()
+        reads = pd.read_csv(os.path.join(sample.paths.sample_root, "gRNA_assignment", "guide_cell_quantification.csv"))
+    except IOError:
+        continue
 
-# Get a score (sum of bp covered)
-scores = u.groupby(["cell", 'chrom'])['overlap'].sum()
-scores = scores.reset_index().pivot_table("overlap", "cell", "chrom").fillna(0)
+    # Assign
+    # unique reads per cell
+    u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
+    # filter out reads in wrong strand
+    u = u[u['strand_agreeement'] == 1]
+    # get unique reads per cell
+    u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
 
-# assign (get max)
-scores["assignment"] = scores.apply(np.argmax, axis=1)
-scores["score"] = scores[list(set(reads['chrom']))].apply(max, axis=1)
-# give nan to cells with no overlap (this is because argmax pickus a draw)
-scores.loc[scores['score'] == 0, 'assignment'] = pd.np.nan
-scores.loc[scores['score'] == 0, 'score'] = pd.np.nan
+    # Get a score (sum of bp covered)
+    scores = u.groupby(["cell", 'chrom'])['overlap'].sum()
+    scores = scores.reset_index().pivot_table("overlap", "cell", "chrom").fillna(0)
 
-# Get only assigned cells
-scores = scores.dropna()
+    # assign (get max)
+    scores["assignment"] = scores.apply(np.argmax, axis=1)
+    scores["score"] = scores[list(set(reads['chrom']))].apply(max, axis=1)
+    # give nan to cells with no overlap (this is because argmax picks a draw)
+    scores.loc[scores['score'] == 0, 'assignment'] = pd.np.nan
+    scores.loc[scores['score'] == 0, 'score'] = pd.np.nan
 
-counts = pd.DataFrame()
-for threshold in [125, 250, 500, 1000, 2000, 4000, 8000]:
-    # Get cells with that many genes
-    scores_in = scores[scores.index.isin(exp_counts[exp_counts > threshold].index)]
-    print(threshold, scores_in.shape[0])
+    # Get only assigned cells
+    scores = scores.dropna()
 
-    # Quantify
-    # concordance between reads in same cell
-    concordance_ratio = scores_in.drop(["assignment", "score"], axis=1).apply(lambda x: x / sum(x), axis=1).replace({0.0: pd.np.nan})
+    counts = pd.DataFrame()
+    for threshold in [125, 250, 500, 1000, 2000, 4000, 8000]:
+        # Get cells with that many genes
+        scores_in = scores[scores.index.isin(exp_counts[exp_counts > threshold].index)]
+        print(threshold, scores_in.shape[0])
 
-    # in how many cells is the dominant gRNA dominanting by less than 3 times than itself?
-    fold = scores_in.drop(["assignment", "score"], axis=1).apply(lambda x: [x[y] / float(sum(x.drop(y))) for y in x.index], axis=1).replace({np.inf: 10}).max(1)
+        if scores_in.shape[0] == 0:
+            break
 
-    counts.loc["not assigned", threshold] = exp_counts[exp_counts > threshold].shape[0] - scores_in.shape[0]
-    counts.loc["% not assigned", threshold] = (counts.loc["not assigned", threshold] / float(exp_counts[exp_counts > threshold].shape[0])) * 100
-    counts.loc["singlets", threshold] = (fold >= 3).sum()
-    counts.loc["% singlets", threshold] = ((fold >= 3).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
-    counts.loc["impurities", threshold] = (fold < 3).sum()
-    counts.loc["% impurities", threshold] = ((fold < 3).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
-counts.columns.name = "genes_covered"
-counts.index.name = "metric"
+        # Quantify
+        # concordance between reads in same cell
+        concordance_ratio = scores_in.drop(["assignment", "score"], axis=1).apply(lambda x: x / sum(x), axis=1).replace({0.0: pd.np.nan})
 
-fig, axis = plt.subplots(1)
-sns.barplot(
-    x="genes_covered",
-    y="value",
-    hue="metric",
-    data=pd.melt(counts[counts.index.str.contains("%")].reset_index(), id_vars=["metric"]),
-    ax=axis)
-axis.set_ylim(0, 100)
-axis.set_xlabel("Genes covered per cell")
-axis.set_ylabel("Percentage of all cells")
-sns.despine(fig)
-fig.savefig(os.path.join(results_dir, "first_cropseq_experiment_assignemnt.various_thresholds.svg"), bbox_inches="tight")
+        # in how many cells is the dominant gRNA dominanting by less than 3 times than itself?
+        fold = scores_in.drop(["assignment", "score"], axis=1).apply(lambda x: [x[y] / float(sum(x.drop(y))) for y in x.index], axis=1).replace({np.inf: 10}).max(1)
+
+        counts.loc["not assigned", threshold] = exp_counts[exp_counts > threshold].shape[0] - scores_in.shape[0]
+        counts.loc["% not assigned", threshold] = (counts.loc["not assigned", threshold] / float(exp_counts[exp_counts > threshold].shape[0])) * 100
+        counts.loc["singlets", threshold] = (fold >= 3).sum()
+        counts.loc["% singlets", threshold] = ((fold >= 3).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
+        counts.loc["impurities", threshold] = (fold < 3).sum()
+        counts.loc["% impurities", threshold] = ((fold < 3).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
+    counts.columns.name = "genes_covered"
+    counts.index.name = "metric"
+
+    fig, axis = plt.subplots(1)
+    sns.barplot(
+        x="genes_covered",
+        y="value",
+        hue="metric",
+        data=pd.melt(counts[counts.index.str.contains("%")].reset_index(), id_vars=["metric"]),
+        ax=axis)
+    axis.set_ylim(0, 100)
+    axis.set_xlabel("Genes covered per cell")
+    axis.set_ylabel("Percentage of all cells")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "stats.{}.grna_assignemnt.various_thresholds.svg".format(sample.name)), bbox_inches="tight")
 
 
 #
@@ -448,7 +463,7 @@ ref2 = ref.groupby(["gene_id", "chrom"])["end"].max()
 dists = dict()
 for sample in [s for s in prj.samples if s.genome == "human"]:
     # bam file
-    bam = pysam.AlignmentFile(os.path.join("results_pipeline", sample.name, "star_gene_exon_tagged.bam"))
+    bam = pysam.AlignmentFile(os.path.join("results_pipeline", sample.name, "star_gene_exon_tagged.clean.bam"))
     # iterate through reads, get read position
     dist = list()
     for i, aln in enumerate(bam):
