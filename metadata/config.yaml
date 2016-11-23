@@ -24,9 +24,9 @@ metadata:
   # Typically, this project config file is stored with the project metadata, so
   # relative paths are considered relative to this project config file.
   # sample_annotation: one-row-per-sample metadata
-  sample_annotation: annotation.separate.csv
+  sample_annotation: annotation.csv
   # merge_table: input for samples with more than one input file
-  merge_table: merge_table.separate.csv
+  merge_table: merge_table.csv
   # compare_table: comparison pairs or groups, like normalization samples
   compare_table: null.csv
 
