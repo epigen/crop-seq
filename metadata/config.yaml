@@ -39,12 +39,18 @@ data_sources:
   bsf_samples_ND: "/scratch/lab_bsf/samples/{demultiplex_run}/{flowcell}_{lane}_samples/{flowcell}_{lane}#{BSF_name}.bam"
 
 genomes:
-  human: hg38_spiked
+  human: hg38
+  human_hek: hg38_spiked_HEKlibrary
+  human_tcr: hg38_spiked_Tcrlibrary
   humanmouse: hg19_mm10_transgenes
+  mouse: mm10
 
 transcriptomes:
   human: hg38
+  human_hek: hg38_spiked_HEKlibrary
+  human_tcr: hg38_spiked_Tcrlibrary
   humanmouse: hg19_mm10_transgenes
+  mouse: mm10
 
 compute:
   # submission_template: the submission form which will be replaced with compute resource parameters
@@ -61,14 +67,13 @@ pipeline_config:
   # pipeline configuration files used in project.
   # Relative paths are relative to this project config file.
   # Default (null) means use the generic config for the pipeline.
-  dropseq.py: null
   # Or you can point to a specific config to be used in this project:
-  # chipseq: chipseq_pipeline.yaml
+  dropseq.py: pipeline_config.yaml
 
 trackhubs:
   trackhub_dir: /scratch/lab_bock/shared/projects/crop-seq/trackhubs
   # url: if you include this, the make_trackhubs will produce a link to your track hub in the project folder.
-  url: https://cemm.at/
+  url: https://medical-epigenomics.org/bocklab/arendeiro/crop-seq/
 
 username: arendeiro
 email: arendeiro@cemm.at

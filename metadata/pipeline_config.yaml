@@ -1,0 +1,47 @@
+# Reference genomes
+resources:
+  genome:
+    hg38: /data/groups/lab_bock/shared/resources/genomes/hg38/hg38.fa
+    hg38_spiked_HEKlibrary: /scratch/lab_bock/shared/projects/crop-seq/spiked_genomes/hg38_spiked_HEKlibrary/Homo_sapiens.GRCh38.dna.primary_assembly.spiked.fa
+    hg38_spiked_Tcrlibrary: /scratch/lab_bock/shared/projects/crop-seq/spiked_genomes/hg38_spiked_Tcrlibrary/Homo_sapiens.GRCh38.dna.primary_assembly.spiked.fa
+    hg19_mm10_transgenes: /data/groups/lab_bock/shared/resources/genomes/hg19_mm10_transgenes/hg19_mm10_transgenes.fasta
+    mm10: /data/groups/lab_bock/shared/resources/genomes/mm10/mm10.fa
+  star_index:
+    hg38: /data/groups/lab_bock/shared/resources/genomes/hg38/indexed_STAR
+    hg38_spiked_HEKlibrary: /scratch/lab_bock/shared/projects/crop-seq/spiked_genomes/hg38_spiked_HEKlibrary
+    hg38_spiked_Tcrlibrary: /scratch/lab_bock/shared/projects/crop-seq/spiked_genomes/hg38_spiked_Tcrlibrary
+    hg19_mm10_transgenes: /data/groups/lab_bock/shared/resources/genomes/hg19_mm10_transgenes/indexed_STAR
+    mm10: /data/groups/lab_bock/shared/resources/genomes/mm10/indexed_STAR
+  refflat:
+    hg38: /data/groups/lab_bock/shared/resources/genomes/hg38/hg38.refFlat
+    hg38_spiked_HEKlibrary: /scratch/lab_bock/shared/projects/crop-seq/spiked_genomes/hg38_spiked_HEKlibrary/Homo_sapiens.GRCh38.dna.primary_assembly.spiked.refFlat
+    hg38_spiked_Tcrlibrary: /scratch/lab_bock/shared/projects/crop-seq/spiked_genomes/hg38_spiked_Tcrlibrary/Homo_sapiens.GRCh38.dna.primary_assembly.spiked.refFlat
+    hg19_mm10_transgenes: /data/groups/lab_bock/shared/resources/genomes/hg19_mm10_transgenes/hg19_mm10_transgenes.refFlat
+    mm10: /data/groups/lab_bock/shared/resources/genomes/mm10/mm10.refFlat
+
+tools:
+  # in the tools section, you may provide the CpG-seq pipeline with the absolute path of the required bioinformatic tools
+  # set to 'java' or 'picard', to use the tool from your $PATH variable
+  dropseq_tools_root: /data/groups/lab_bock/shared/resources/tools/Drop-seq_tools-1.12/
+  # piccard_jar: /cm/shared/apps/picard-tools/1.118/picard-1.118.jar
+  piccard_jar: /data/groups/lab_bock/shared/resources/tools/Drop-seq_tools-1.12/3rdParty/picard/picard.jar
+  star: /cm/shared/apps/star/2.4.2a/STAR
+
+# the parameters section is intended for all parameters passed to bioinformatic tools
+parameters:
+  cell_barcode_bases: 1-12
+  umi_barcode_bases: 13-20
+  min_base_quality: 10
+  min_bases_below_quality: 1
+  trim_sequence: AAGCAGTGGTATCAACGCAGAGTGAATGGG
+  trim_sequence_length: 5
+  polya_size: 6
+  min_genes_per_cell:
+    - 500
+    - 100
+    # - 10
+  repair_barcodes: True
+  number_seq_error_barcodes_check: 10000000
+  bead_primer_sequence: AAGCAGTGGTATCAACGCAGAGTAC
+  distance_to_bead_primer_seq: 0
+  max_number_barcode_bases_to_repair: 4

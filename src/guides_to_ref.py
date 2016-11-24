@@ -121,7 +121,7 @@ for genome in prj.genomes.__dict__.keys():
             os.system(cmd)
 
             # Create reflat files
-            cmd = "~/Drop-seq_tools-1.12/ConvertToRefFlat"
+            cmd = "srun --mem 80000 -p develop java -Xmx80g -jar ~/Drop-seq_tools-1.12/jar/dropseq.jar ConvertToRefFlat"
             cmd += " SEQUENCE_DICTIONARY={}".format(os.path.join(spiked_dir, "Homo_sapiens.GRCh38.dna.primary_assembly.spiked.dict"))
             cmd += " ANNOTATIONS_FILE= {}".format(os.path.join(spiked_dir, "Homo_sapiens.GRCh38.77.spiked.gtf"))
             cmd += " OUTPUT={}".format(os.path.join(spiked_dir, "Homo_sapiens.GRCh38.dna.primary_assembly.spiked.refFlat"))
