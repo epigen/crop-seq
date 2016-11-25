@@ -233,11 +233,16 @@ def plot_reads_in_constructs(reads):
 def make_assignment(reads, guide_annotation):
     # Assign
     # unique reads per cell
-    u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
-    # filter out reads in wrong strand
-    u = u[u['strand_agreeement'] == 1]
-    # get unique reads per cell
-    u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
+    # reduce molecules
+    u = reads.groupby(
+        ['cell', 'molecule', 'chrom'])[
+        'distance', 'overlap', 'inside', 'mapping_quality', 'strand_agreeement'].max().reset_index()
+
+    # further reduce molecules by solving chromosome conflicts (assign molecule to chromosome with maximum overlap)
+    uu = u.ix[u.groupby(['cell', 'molecule']).apply(lambda x: x['overlap'].argmax())]
+
+    # remove marginal overlaps and reads in wrong strand
+    u = uu[(uu['overlap'] > 0) & (uu['strand_agreeement'] == 1)]
 
     # Get a score (sum of bp covered)
     scores = u.groupby(["cell", 'chrom'])['overlap'].sum()
@@ -253,32 +258,50 @@ def make_assignment(reads, guide_annotation):
     # Get only assigned cells
     scores = scores.dropna()
 
-    # Plot bp covered per cell
-    g = sns.FacetGrid(scores[["assignment", "score"]], col="assignment", sharex=False, sharey=False)
-    g.map(sns.distplot, 'score', kde=False)
-    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.bp_covered.svg"), bbox_inches="tight")
-
-    # Convert to coverage in X times (divide by length of gRNA)
-    coverage = scores.drop(['assignment', 'score'], axis=1).apply(lambda x: x / float(len(guide_annotation[guide_annotation["target"] == x.name]["sequence"].squeeze())), axis=0)
-    coverage["maxscore"] = coverage.apply(max, axis=1)
-    coverage["assignment"] = coverage.drop("maxscore", axis=1).apply(np.argmax, axis=1)
-
-    cov = coverage[~(coverage["maxscore"] == 0)][["assignment", "maxscore"]]
-    g = sns.FacetGrid(cov, col="assignment", sharex=False, sharey=False)
-    g.map(sns.distplot, 'maxscore', bins=100, kde=False)
-    for a in g.axes.flatten():
-        a.set_xlabel("coverage log2")
-        # a.set_xscale("log")
-    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.coverage.svg"), bbox_inches="tight")
-
     # concordance between reads in same cell
-    concordance_ratio = scores.drop(["assignment", "score"], axis=1).apply(lambda x: x / sum(x), axis=1).replace({0.0: pd.np.nan})
-    g = sns.FacetGrid(pd.melt(concordance_ratio, value_name="score_concordance"), col="chrom", sharex=True, sharey=False)
-    g.map(sns.distplot, 'score_concordance', kde=False)
-    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.score_concordance_ratio.svg"), bbox_inches="tight")
+    scores['concordance_ratio'] = scores.drop(["assignment", "score"], axis=1).apply(
+        lambda x: x / sum(x), axis=1).replace({0.0: pd.np.nan}).sum(axis=1)
 
     # Get assigned cells
     assignment = scores.reset_index()[["cell", "assignment", "score"]]
+
+    # Convert to coverage in X times (divide by length of gRNA)
+    coverage = scores.drop(['assignment', 'score'], axis=1).apply(
+        lambda x: x / float(len(guide_annotation[guide_annotation["oligo_name"] == x.name]["sequence"].squeeze())),
+        axis=0)
+    coverage["maxscore"] = coverage.apply(max, axis=1)
+    coverage["assignment"] = coverage.drop("maxscore", axis=1).apply(np.argmax, axis=1)
+
+    return scores, assignment, coverage
+
+
+def plot_assignments(scores, assignment, coverage):
+
+    # If number of gRNAs in libarary is less than 20, plot each in a panel separately, else plot all together
+    if scores.shape[1] < 22:
+        extras = {"col": "assignment", "col_wrap": 4}
+    else:
+        {}
+
+    # Plot bp covered per cell
+    g = sns.FacetGrid(scores[["assignment", "score"]], col="assignment", sharex=False, sharey=False)
+    g.map(sns.distplot, 'score', kde=False)
+    g.set(xlim=(0, 1000))
+    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.bp_covered.svg"), bbox_inches="tight")
+
+    # transform covereage to log
+    cov = coverage[["assignment", "maxscore"]]
+    cov.loc[:, 'maxscore'] = np.log2(cov['maxscore'])
+
+    g = sns.FacetGrid(cov, sharex=False, sharey=False, **extras)
+    g.map(sns.distplot, 'maxscore', bins=100, kde=False)
+    for a in g.axes.flatten():
+        a.set_xlabel("log2 coverage")
+    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.coverage.svg"), bbox_inches="tight")
+
+    g = sns.FacetGrid(scores, sharex=True, sharey=False, **extras)
+    g.map(sns.distplot, 'concordance_ratio', kde=False)
+    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.score_concordance_ratio.svg"), bbox_inches="tight")
 
     # plot assignment stats
     c = assignment['assignment'].value_counts()  # .replace(pd.np.nan, "None")
@@ -286,19 +309,34 @@ def make_assignment(reads, guide_annotation):
     sns.barplot(c.index, c.values, ax=axis)
     fig.savefig(os.path.join(output_dir, "barcodes_per_cell.identified.svg"), bbox_inches="tight")
 
-    fig, axis = plt.subplots(2, 2, figsize=(8, 8), sharex=False, sharey=False)
-    axis = axis.flatten()
-    for i, gene in enumerate(set(scores['assignment'].dropna())):
-        sns.distplot(scores[scores['assignment'] == gene]['score'], kde=False, ax=axis[i])
-        axis[i].set_title(gene)
-        axis[i].set_xlim(0, max(scores[scores['assignment'] == gene]['score']))
-    fig.savefig(os.path.join(output_dir, "barcodes_per_cell.scores.distibution.svg"), bbox_inches="tight")
+    melted_scores = pd.melt(scores.reset_index(), ['cell', 'assignment', 'score', 'concordance_ratio'])
 
-    return scores, assignment
+    g = sns.FacetGrid(melted_scores, sharex=False, sharey=False, **extras)
+    g.map(sns.distplot, 'value', bins=200, kde=False)
+    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.scores.distibution.svg"), bbox_inches="tight")
+
+    # calculate abs amount of basepairs overlaping the gRNA of the assigned cell vs all others
+    overlap_per_cell = reads.groupby(["cell"])['overlap'].sum()
+    overlap_per_guide = reads.groupby(["cell", "chrom"])['overlap'].sum()
+    overlap_assignment = scores.apply(lambda x: overlap_per_guide.ix[x.name, x['assignment']] if not pd.isnull(x['assignment']) else pd.np.nan, axis=1)
+    overlap_others = overlap_per_cell - overlap_assignment
+
+    sns.jointplot(overlap_others, overlap_assignment, alpha=0.1)
+    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.svg"), bbox_inches="tight")
+    plt.close("all")
+    sns.jointplot(overlap_others, np.log2(1 + overlap_assignment), alpha=0.1)
+    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.ylog.svg"), bbox_inches="tight")
+    plt.close("all")
+    sns.jointplot(np.log2(1 + overlap_others), np.log2(1 + overlap_assignment), alpha=0.1)
+    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.bothlog.svg"), bbox_inches="tight")
+    plt.close("all")
+    sns.jointplot(overlap_others, overlap_assignment, xlim=(-100, overlap_assignment.max() + 100), ylim=(-100, overlap_assignment.max() + 100), alpha=0.1)
+    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.lims.svg"), bbox_inches="tight")
+    plt.close("all")
 
 
 # Start project, add samples
-prj = Project(os.path.join("metadata", "config.separate.yaml"))
+prj = Project(os.path.join("metadata", "config.yaml"))
 prj.add_sample_sheet()
 prj.paths.results_dir = results_dir = os.path.join("results")
 
@@ -328,36 +366,20 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
     # assign
     bam_handle = pysam.AlignmentFile(bam)
     cells = set([dict(aln.get_tags())['XC'] for aln in bam_handle])
-    scores, assignment = make_assignment(reads, sel_guide_annotation)
+    scores, assignment, coverage = make_assignment(reads, sel_guide_annotation)
     scores.to_csv(os.path.join(output_dir, "guide_cell_scores.csv"), index=True)
-    assignment.to_csv(os.path.join(output_dir, "guide_cell_assignment.csv"), index=False)
+    assignment.to_csv(os.path.join(output_dir, "guide_cell_assignment.csv"), index=True)
+    coverage.to_csv(os.path.join(output_dir, "guide_cell_coverage.csv"), index=True)
     scores = pd.read_csv(os.path.join(output_dir, "guide_cell_scores.csv"), index_col=0)
     assignment = pd.read_csv(os.path.join(output_dir, "guide_cell_assignment.csv"))
+    coverage = pd.read_csv(os.path.join(output_dir, "guide_cell_coverage.csv"), index_col=0)
 
     # Plots
-
     # reads along constructs
     plot_reads_in_constructs(reads)
 
-    # calculate abs amount of basepairs overlaping the gRNA of the assigned cell vs all others
-    overlap_per_cell = reads.groupby(["cell"])['overlap'].sum()
-    overlap_per_guide = reads.groupby(["cell", "chrom"])['overlap'].sum()
-    overlap_assignment = scores.apply(lambda x: overlap_per_guide.ix[x.name, x['assignment']] if not pd.isnull(x['assignment']) else pd.np.nan, axis=1)
-    overlap_others = overlap_per_cell - overlap_assignment
-
-    sns.jointplot(overlap_others, overlap_assignment, alpha=0.1)
-    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.svg"), bbox_inches="tight")
-    plt.close("all")
-    sns.jointplot(overlap_others, np.log2(1 + overlap_assignment), alpha=0.1)
-    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.ylog.svg"), bbox_inches="tight")
-    plt.close("all")
-    sns.jointplot(np.log2(1 + overlap_others), np.log2(1 + overlap_assignment), alpha=0.1)
-    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.bothlog.svg"), bbox_inches="tight")
-    plt.close("all")
-    sns.jointplot(overlap_others, overlap_assignment, xlim=(-100, overlap_assignment.max() + 100), ylim=(-100, overlap_assignment.max() + 100), alpha=0.1)
-    plt.savefig(os.path.join(output_dir, "duplets_assignment_overlap.lims.svg"), bbox_inches="tight")
-    plt.close("all")
-
+    # assignment quality/coverage
+    plot_assignments(scores, assignment, coverage)
 
 #
 
