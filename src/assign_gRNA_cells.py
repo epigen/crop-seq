@@ -144,7 +144,6 @@ def get_reads_in_Cas9_construct(bam):
 
 
 def plot_reads_in_constructs(reads):
-    from collections import Counter
     # Inspect
     fig, axis = plt.subplots(2, sharex=True)
     # number of barcode reads per cell
@@ -153,81 +152,78 @@ def plot_reads_in_constructs(reads):
     # number of unique barcode reads per cell
     sns.distplot(np.log2(1 + reads.groupby(["cell"])['molecule'].apply(set).apply(len)), ax=axis[1], kde=False)
     axis[1].set_xlabel("Molecules (log2(1 + x))")
+    sns.despine(fig)
     fig.savefig(os.path.join(output_dir, "barcodes_per_cell.svg"), bbox_inches="tight")
 
-    # index
-    u = reads.ix[reads[["chrom", "cell", 'molecule']].drop_duplicates().index]
+    # process
+    u = reads.groupby(
+        ['cell', 'molecule', 'chrom'])[
+        'distance', 'overlap', 'inside', 'mapping_quality', 'strand_agreeement'].max().reset_index()
+
+    # further reduce molecules by solving chromosome conflicts (assign molecule to chromosome with maximum overlap)
+    uu = u.ix[u.groupby(['cell', 'molecule']).apply(lambda x: x['overlap'].argmax())]
+
+    # efficiency of reads in gRNA vs whole construct
+    inside_fraction = u.groupby(["cell"])['inside'].sum() / u.groupby(["cell"]).apply(len)
+    fig, axis = plt.subplots(1)
+    sns.distplot(inside_fraction, kde=False)
+    axis.set_xlabel("Ratio molecules overlap gRNA / total")
+    sns.despine(fig)
+    fig.savefig(os.path.join(output_dir, "barcodes_per_cell.grna_reads_vs_whole_construct.svg"), bbox_inches="tight")
+
+    # remove no overlaps and reads in wrong strand
+    u = uu[(uu['overlap'] > 0) & (uu['strand_agreeement'] == 1)]
 
     # number of unique barcode reads saying inside per cell
     fig, axis = plt.subplots(1)
     sns.distplot(np.log2(1 + u.groupby(["cell"])['molecule'].apply(len)), ax=axis, kde=False)
     axis.set_xlabel("Molecules (log2(1 + x))")
+    sns.despine(fig)
     fig.savefig(os.path.join(output_dir, "barcodes_per_cell.inside.svg"), bbox_inches="tight")
 
     # concordance between reads in same cell
-    inside_ratio = u.groupby(["cell"]).apply(lambda x: x['inside'] / len(x))
+    concordant_fraction = 1. / u.groupby(["cell"])['chrom'].nunique()
     fig, axis = plt.subplots(1)
-    sns.distplot(inside_ratio, kde=False)
+    sns.distplot(concordant_fraction, kde=False)
     axis.set_xlabel("Ratio molecules overlap gRNA / total")
+    sns.despine(fig)
     fig.savefig(os.path.join(output_dir, "barcodes_per_cell.concordance.svg"), bbox_inches="tight")
 
-    # how many cells are fully out?
-    inside_ratio[inside_ratio == 0.0].shape[0]
-    # inside?
-    inside = inside_ratio[1.0 == inside_ratio]
-    inside.shape[0]
-    # in-between?
-    between = inside_ratio[(1.0 > inside_ratio) & (inside_ratio > 0.0)]
-    between.shape[0]
+    if reads['chrom'].str.contains("Filler_1").any():
 
-    # distribution of guides for cells inside
-    fig, axis = plt.subplots(2)
-    c = Counter(u[u['cell'].isin(inside.reset_index()['cell'])][['chrom', 'cell']].drop_duplicates()['chrom'])
-    sns.barplot(c.keys(), c.values(), ax=axis[0])
-    c = Counter(u[u['cell'].isin(between.reset_index()['cell'])][['chrom', 'cell']].drop_duplicates()['chrom'])
-    sns.barplot(c.keys(), c.values(), ax=axis[1])
-    axis[0].set_title("Cells with only molecules inside")
-    axis[1].set_title("Cells with only molecules between")
-    fig.savefig(os.path.join(output_dir, "barcodes_per_cell.guides_inside.svg"), bbox_inches="tight")
+        # distribution of reads regarding constructs (for each guide)
+        g = sns.FacetGrid(u, col="chrom", sharex=False, sharey=False)
+        g.map(sns.distplot, 'distance', kde=False)
+        sns.despine(fig)
+        g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.distance.svg"), bbox_inches="tight")
 
-    # distribution of reads regarding constructs (for each guide)
-    g = sns.FacetGrid(u, col="chrom", sharex=False, sharey=False)
-    g.map(sns.distplot, 'distance', kde=False)
-    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.distance.svg"), bbox_inches="tight")
+        # For all guides plot distribution inside and out
+        fig, axis = plt.subplots(2, len(set(u["chrom"])), sharex=False, sharey=False, figsize=(16, 8))
+        axis = iter(axis.flatten())
+        for inside in [1.0, 0.0]:
+            for chrom in set(u["chrom"]):
+                ax = axis.next()
+                ax.set_title(chrom)
+                ax.set_ylabel("Inside" if inside else "Outside")
+                subset = u[(u["chrom"] == chrom) & (u["inside"] == inside)]
+                if subset.shape[0] > 1:
+                    sns.distplot(subset['distance'], kde=False, ax=ax)
+                    sns.despine(fig)
+        fig.savefig(os.path.join(output_dir, "barcodes_per_cell.distance.in_out.svg"), bbox_inches="tight")
 
-    # Inspect weird MBD1 distribution pattern
-    fig, axis = plt.subplots(2)
-    u[u['chrom'] == "MBD1"].groupby("inside")['distance'].apply(sns.distplot, kde=False, ax=axis[0])
-    u[u['chrom'] == "MBD1"].groupby("inside")['overlap'].apply(sns.distplot, kde=False, ax=axis[1])
-    axis[0].set_xlabel("Distance to gRNA")
-    axis[1].set_xlabel("Overlap with gRNA")
-    fig.savefig(os.path.join(output_dir, "barcodes_per_cell.guides_inside.MBD1_distance_overlap_in_out.svg"), bbox_inches="tight")
-
-    # For all guides plot distribution inside and out
-    fig, axis = plt.subplots(2, len(set(u["chrom"])), sharex=False, sharey=False, figsize=(16, 8))
-    axis = iter(axis.flatten())
-    for inside in [1.0, 0.0]:
-        for chrom in set(u["chrom"]):
-            ax = axis.next()
-            ax.set_title(chrom)
-            ax.set_ylabel("Inside" if inside else "Outside")
-            subset = u[(u["chrom"] == chrom) & (u["inside"] == inside)]
-            if subset.shape[0] > 1:
-                sns.distplot(subset['distance'], kde=False, ax=ax)
-    fig.savefig(os.path.join(output_dir, "barcodes_per_cell.distance.in_out.svg"), bbox_inches="tight")
-
-    # For all guides plot distribution inside and out
-    fig, axis = plt.subplots(2, len(set(u["chrom"])), sharex=False, sharey=False, figsize=(16, 8))
-    axis = iter(axis.flatten())
-    for inside in [1.0, 0.0]:
-        for chrom in set(u["chrom"]):
-            ax = axis.next()
-            ax.set_title(chrom)
-            ax.set_ylabel("Inside" if inside else "Outside")
-            subset = u[(u["chrom"] == chrom) & (u["inside"] == inside)]
-            if subset.shape[0] > 1:
-                sns.distplot(subset['overlap'], kde=False, ax=ax)
-    fig.savefig(os.path.join(output_dir, "barcodes_per_cell.overlap.in_out.svg"), bbox_inches="tight")
+        # For all guides plot distribution inside and out
+        fig, axis = plt.subplots(2, len(set(u["chrom"])), sharex=False, sharey=False, figsize=(16, 8))
+        axis = iter(axis.flatten())
+        for inside in [1.0, 0.0]:
+            for chrom in set(u["chrom"]):
+                ax = axis.next()
+                ax.set_title(chrom)
+                ax.set_ylabel("Inside" if inside else "Outside")
+                subset = u[(u["chrom"] == chrom) & (u["inside"] == inside)]
+                if subset.shape[0] > 1:
+                    sns.distplot(subset['overlap'], kde=False, ax=ax)
+        sns.despine(fig)
+        fig.savefig(os.path.join(output_dir, "barcodes_per_cell.overlap.in_out.svg"), bbox_inches="tight")
 
 
 def make_assignment(reads, guide_annotation):
@@ -281,38 +277,47 @@ def plot_assignments(scores, assignment, coverage):
     if scores.shape[1] < 22:
         extras = {"col": "assignment", "col_wrap": 4}
     else:
-        {}
+        extras = {}
 
     # Plot bp covered per cell
-    g = sns.FacetGrid(scores[["assignment", "score"]], col="assignment", sharex=False, sharey=False)
+    g = sns.FacetGrid(scores[["assignment", "score"]], sharex=False, sharey=False, **extras)
     g.map(sns.distplot, 'score', kde=False)
     g.set(xlim=(0, 1000))
+    sns.despine(g.fig)
     g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.bp_covered.svg"), bbox_inches="tight")
 
     # transform covereage to log
     cov = coverage[["assignment", "maxscore"]]
     cov.loc[:, 'maxscore'] = np.log2(cov['maxscore'])
 
-    g = sns.FacetGrid(cov, sharex=False, sharey=False, **extras)
-    g.map(sns.distplot, 'maxscore', bins=100, kde=False)
-    for a in g.axes.flatten():
-        a.set_xlabel("log2 coverage")
-    g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.coverage.svg"), bbox_inches="tight")
+    try:
+        g = sns.FacetGrid(cov, sharex=False, sharey=False, **extras)
+        g.map(sns.distplot, 'maxscore', bins=100, kde=False)
+        for a in g.axes.flatten():
+            a.set_xlabel("log2 coverage")
+            sns.despine(g.fig)
+        g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.coverage.svg"), bbox_inches="tight")
+    except:
+        pass
 
     g = sns.FacetGrid(scores, sharex=True, sharey=False, **extras)
     g.map(sns.distplot, 'concordance_ratio', kde=False)
+    sns.despine(g.fig)
     g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.score_concordance_ratio.svg"), bbox_inches="tight")
 
     # plot assignment stats
     c = assignment['assignment'].value_counts()  # .replace(pd.np.nan, "None")
     fig, axis = plt.subplots(1)
     sns.barplot(c.index, c.values, ax=axis)
+    axis.set_xticklabels(axis.get_xticklabels(), rotation=90)
+    sns.despine(fig)
     fig.savefig(os.path.join(output_dir, "barcodes_per_cell.identified.svg"), bbox_inches="tight")
 
     melted_scores = pd.melt(scores.reset_index(), ['cell', 'assignment', 'score', 'concordance_ratio'])
 
     g = sns.FacetGrid(melted_scores, sharex=False, sharey=False, **extras)
     g.map(sns.distplot, 'value', bins=200, kde=False)
+    sns.despine(fig)
     g.fig.savefig(os.path.join(output_dir, "barcodes_per_cell.scores.distibution.svg"), bbox_inches="tight")
 
     # calculate abs amount of basepairs overlaping the gRNA of the assigned cell vs all others
@@ -364,11 +369,9 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
     cas9_expression.reset_index().to_csv(os.path.join(output_dir, "cas9_quantification.counts.csv"), index=False)
 
     # assign
-    bam_handle = pysam.AlignmentFile(bam)
-    cells = set([dict(aln.get_tags())['XC'] for aln in bam_handle])
     scores, assignment, coverage = make_assignment(reads, sel_guide_annotation)
     scores.to_csv(os.path.join(output_dir, "guide_cell_scores.csv"), index=True)
-    assignment.to_csv(os.path.join(output_dir, "guide_cell_assignment.csv"), index=True)
+    assignment.to_csv(os.path.join(output_dir, "guide_cell_assignment.csv"), index=False)
     coverage.to_csv(os.path.join(output_dir, "guide_cell_coverage.csv"), index=True)
     scores = pd.read_csv(os.path.join(output_dir, "guide_cell_scores.csv"), index_col=0)
     assignment = pd.read_csv(os.path.join(output_dir, "guide_cell_assignment.csv"))
