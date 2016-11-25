@@ -26,14 +26,14 @@ def get_reads_in_construct(bam, guide_annotation):
 
     reads = pd.DataFrame()
     # for each "chromosome" (each guideRNA)
-    for chrom in guide_annotation["target"].unique():
+    for chrom in guide_annotation["oligo_name"].unique():
         print(chrom)
 
         if chrom == "Cas9_blast":
             continue
 
         # get position of alignment
-        guide_seq = guide_annotation[guide_annotation["target"] == chrom]['sequence'].squeeze()
+        guide_seq = guide_annotation[guide_annotation["oligo_name"] == chrom]['sequence'].squeeze()
         chrom_size = len(prj.config['crop-seq']['u6'] + guide_seq + prj.config['crop-seq']['rest'])
         guide_start_pos = len(prj.config['crop-seq']['u6']) + 1
         guide_end_pos = chrom_size - len(prj.config['crop-seq']['rest'])
@@ -72,8 +72,12 @@ def get_reads_in_construct(bam, guide_annotation):
             # aln.mapapping_quality
             mapping_quality = np.mean(aln.query_alignment_qualities)
 
-            reads = reads.append(pd.Series([chrom, cell, molecule, distance, overlap, inside, mapping_quality, strand_agreeement]), ignore_index=True)
-    reads.columns = ["chrom", "cell", "molecule", "distance", "overlap", "inside", "mapping_quality", "strand_agreeement"]
+            reads = reads.append(pd.Series([
+                chrom, cell, molecule, aln.reference_start, aln.reference_end,
+                distance, overlap, inside, mapping_quality, strand_agreeement]), ignore_index=True)
+    reads.columns = [
+        "chrom", "cell", "molecule", "read_start", "read_end",
+        "distance", "overlap", "inside", "mapping_quality", "strand_agreeement"]
     return reads
 
 
@@ -166,10 +170,19 @@ def plot_reads_in_constructs(reads):
     # efficiency of reads in gRNA vs whole construct
     inside_fraction = u.groupby(["cell"])['inside'].sum() / u.groupby(["cell"]).apply(len)
     fig, axis = plt.subplots(1)
-    sns.distplot(inside_fraction, kde=False)
+    sns.distplot(inside_fraction, bins=20, kde=False)
     axis.set_xlabel("Ratio molecules overlap gRNA / total")
     sns.despine(fig)
     fig.savefig(os.path.join(output_dir, "barcodes_per_cell.grna_reads_vs_whole_construct.svg"), bbox_inches="tight")
+
+    # efficiency of reads in gRNA vs whole construct vs number of captured gRNA molecules
+    inside_fraction = u.groupby(["cell"])['inside'].sum() / u.groupby(["cell"]).apply(len)
+
+    sns.jointplot(u.groupby(["cell"]).apply(len), u.groupby(["cell"])['inside'].sum())
+    axis.set_xlabel("Total molecules in construct per cell")
+    axis.set_xlabel("Molecules overlapping gRNA per cell")
+    plt.savefig(os.path.join(output_dir, "barcodes_per_cell.all_reads_vs_total_reads.svg"), bbox_inches="tight")
+    plt.close("all")
 
     # remove no overlaps and reads in wrong strand
     u = uu[(uu['overlap'] > 0) & (uu['strand_agreeement'] == 1)]
@@ -349,7 +362,7 @@ prj.paths.results_dir = results_dir = os.path.join("results")
 guide_annotation = pd.read_csv(os.path.join("metadata", "guide_annotation.csv"))
 
 for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s in prj.samples if hasattr(s, "replicate")]
-    output_dir = sample.paths.sample_root
+    output_dir = os.path.join(sample.paths.sample_root, "gRNA_assignment")
 
     # select gRNAs in respective sample library
     sel_guide_annotation = guide_annotation[guide_annotation['library'] == sample.grna_library]
@@ -390,116 +403,89 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
 
 
 # Figure 1g
+from itertools import chain
+colors = sns.color_palette("colorblind")
+
 u6 = prj.config['crop-seq']['u6']
 rest = prj.config['crop-seq']['rest']
 
 for sample in [s for s in prj.samples if s.name == "CROP-seq_HEK293T_1_resequenced"]:
-    reads = pd.read_csv(os.path.join(sample.paths.sample_root, "gRNA_quantification", "guide_cell_quantification.csv"))
+    # read in read/construct overlap information
+    reads = pd.read_csv(os.path.join(sample.paths.sample_root, "gRNA_assignment", "guide_cell_quantification.csv"))
+
+    # process
+    u = reads.groupby(
+        ['cell', 'molecule', 'chrom'])[
+        'read_start', 'read_end', 'distance', 'overlap', 'inside', 'mapping_quality', 'strand_agreeement'].max().reset_index()
+    # further reduce molecules by solving chromosome conflicts (assign molecule to chromosome with maximum overlap)
+    uu = u.ix[u.groupby(['cell', 'molecule']).apply(lambda x: x['overlap'].argmax())]
+    # remove no overlaps and reads in wrong strand
+    u = uu[uu['strand_agreeement'] == 1]
+
     # select gRNAs in respective sample library
     sel_guide_annotation = guide_annotation[guide_annotation['library'] == sample.grna_library]
 
-    bam = os.path.join(sample.paths.sample_root, "star_gene_exon_tagged.clean.bam")
-
-    # expand insertion sites with read length
-
-    # for filler scale start/end to end of gRNA
-    l = len(sel_guide_annotation[sel_guide_annotation['target'] == 'filler']['sequence'].squeeze())
-
-    reads2 = reads.copy()
+    reads2 = u.copy()
+    # normalize filler length to match start/end of gRNA
+    filler_length = len(sel_guide_annotation.loc[sel_guide_annotation['oligo_name'] == 'Filler_1', 'sequence'].squeeze())
     reads2.loc[
-        (reads2["chrom"] == "filler") & (reads2["start"] > len(u6) + 20), "start"] -= l
+        (reads2["chrom"] == "Filler_1") & (reads2["read_start"] > len(u6) + 20), "read_start"] -= filler_length
     reads2.loc[
-        (reads2["chrom"] == "filler") & (reads2["end"] > len(u6) + 20), "end"] -= l
-
-    # Frequencies of read start positions
-    colors = sns.color_palette("colorblind")
-    fig, axis = plt.subplots(1, 1, sharex=True)
-    for i, chrom in enumerate(reads2["chrom"].unique()):
-        if chrom in ["filler"]:
-            continue
-        reads_chrom = reads2[reads2["chrom"] == chrom]
-        axis.hist(reads_chrom[reads_chrom["inside"] == 1]["start"], color=colors[i], bins=range(0, len(u6) + 20 + len(rest), 10))
-        # axis.hist(reads_chrom[reads_chrom["inside"] == 1].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1), color=colors[i], bins=range(0, len(u6) + 20 + len(rest), 10))
-    axis.hist(reads2[(reads2["inside"] != 1) & (reads2["chrom"] != "filler")]["start"], color="grey", bins=range(0, len(u6) + 20 + len(rest), 10))
-    axis.hist(reads2[(reads2["inside"] != 1) & (reads2["chrom"] == "filler")]["start"], color="grey", bins=range(0, len(u6) + 20 + len(rest), 10))
-
-    for coor, name in [(0, "startU6"), (len(u6), "start gRNA"), (len(u6) + 20, "start backbone"), (len(u6) + 20 + len(rest), "start polyA")]:
-        axis.axvline(coor, 0, 1, linewidth=3, color="black", linestyle="--")
-        axis.text(coor, 1, name)
-    axis.set_xlim((0, len(u6) + 20 + len(rest) + 50))
-    fig.savefig(os.path.join(output_dir, "fig1g.svg"), bbox_inches="tight")
-
-    # Stacked frequencies of read start positions
-    colors = sns.color_palette("colorblind")
-    data = [
-        reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "MBD1")]["start"],
-        reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "TET2")]["start"],
-        reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "DNMT3B")]["start"],
-        reads2[(reads2["inside"] != 1) & (reads2["chrom"] != "filler")]["start"],
-        reads2[(reads2["inside"] != 1) & (reads2["chrom"] == "filler")]["start"]
-    ]
-
-    fig, axis = plt.subplots(1, 1, sharex=True)
-    axis.hist(
-        data,
-        bins=range(0, len(u6) + 20 + len(rest), 10),
-        histtype='barstacked',
-        normed=True,
-        color=colors[:3] + ["grey", "grey"])
-
-    for coor, name in [(0, "startU6"), (len(u6), "start gRNA"), (len(u6) + 20, "start backbone"), (len(u6) + 20 + len(rest), "start polyA")]:
-        axis.axvline(coor, 0, 1, linewidth=3, color="black", linestyle="--")
-        axis.text(coor, 0.01, name)
-    axis.set_xlim((0, len(u6) + 20 + len(rest) + 50))
-    fig.savefig(os.path.join(output_dir, "fig1g.stacked.svg"), bbox_inches="tight")
-
-    #
+        (reads2["chrom"] == "Filler_1") & (reads2["read_end"] > len(u6) + 20), "read_end"] -= filler_length
 
     # Stacked frequencies of read sequences
-    from itertools import chain
-    colors = sns.color_palette("colorblind")
-    read_data = [
-        list(chain.from_iterable(reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "MBD1")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "TET2")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "DNMT3B")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] != 1) & (reads2["chrom"] != "filler")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] != 1) & (reads2["chrom"] == "filler")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values))
-    ]
+    read_data = list()
+    for chrom in reads2['chrom'].drop_duplicates():
+        if chrom == "Filler_1":
+            continue
+        read_data.append(
+            list(list(chain.from_iterable(
+                reads2[(reads2["inside"] == 1) & (reads2["chrom"] == chrom)].apply(
+                    lambda x: range(int(x["read_start"]), int(x["read_end"])), axis=1).values))))
+    read_data.append(list(list(chain.from_iterable(reads2[reads2["inside"] != 1].apply(lambda x: range(int(x["read_start"]), int(x["read_end"])), axis=1).values))))
 
     fig, axis = plt.subplots(1, 1, sharex=True)
     axis.hist(
         read_data,
         bins=range(0, len(u6) + 20 + len(rest), 10),
         histtype='barstacked',
-        normed=True,
-        color=colors[:3] + ["grey", "grey"])
+        normed=False,
+        color=colors[:3] + ["grey"])
 
     for coor, name in [(0, "startU6"), (len(u6), "start gRNA"), (len(u6) + 20, "start backbone"), (len(u6) + 20 + len(rest), "start polyA")]:
         axis.axvline(coor, 0, 1, linewidth=3, color="black", linestyle="--")
         axis.text(coor, 0.01, name)
     axis.set_xlim((0, len(u6) + 20 + len(rest) + 50))
-    fig.savefig(os.path.join(output_dir, "fig1g.reads.stacked.svg"), bbox_inches="tight")
+    sns.despine(fig)
+    fig.savefig(os.path.join("results", "figures", "fig1g.reads.stacked.svg"), bbox_inches="tight")
 
-    #
+    # transform to percentage of total in each bin
 
-    colors = sns.color_palette("colorblind")
-    read_data = [
-        list(chain.from_iterable(reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "MBD1")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "TET2")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] == 1) & (reads2["chrom"] == "DNMT3B")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] != 1) & (reads2["chrom"] != "filler")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values)),
-        list(chain.from_iterable(reads2[(reads2["inside"] != 1) & (reads2["chrom"] == "filler")].apply(lambda x: range(int(x["start"]), int(x["end"])), axis=1).values))
-    ]
+    histogram_arrays, bins, patches = axis.hist(
+        read_data,
+        bins=range(0, len(u6) + 20 + len(rest), 10),
+        normed=True)
+
+    histogram_arrays = np.array(histogram_arrays)
+    histogram_arrays_norm = np.zeros(histogram_arrays.shape)
 
     fig, axis = plt.subplots(1, 1, sharex=True)
-    axis.hist(
-        data,
-        bins=range(0, len(u6) + 20 + len(rest), 10),
-        histtype='barstacked',
-        color=colors[:3] + ["grey", "grey"])
+    c = colors[:3] + ["grey"]
+    for i in range(histogram_arrays.shape[0]):
+        for j in range(histogram_arrays.shape[1]):
+            histogram_arrays_norm[i, j] = (histogram_arrays[i][j]) / (histogram_arrays[np.delete(np.arange(histogram_arrays.shape[0]), i), j].sum())
+
+        extra = {"bottom": histogram_arrays_norm[i - 1, ]} if i > 0 else {}
+
+        histogram_arrays_norm[i][histogram_arrays_norm[i] == np.inf] = 1
+
+        axis.bar(
+            bins[:-1], height=histogram_arrays_norm[i], width=8,
+            color=c[i], **extra)
 
     for coor, name in [(0, "startU6"), (len(u6), "start gRNA"), (len(u6) + 20, "start backbone"), (len(u6) + 20 + len(rest), "start polyA")]:
         axis.axvline(coor, 0, 1, linewidth=3, color="black", linestyle="--")
         axis.text(coor, 0.01, name)
     axis.set_xlim((0, len(u6) + 20 + len(rest) + 50))
-    fig.savefig(os.path.join(output_dir, "fig1g.{}.reads.frequencies.stacked.svg".format(sample.name)), bbox_inches="tight")
+    sns.despine(fig)
+    fig.savefig(os.path.join("results", "figures", "fig1g.reads.stacked.norm.svg"), bbox_inches="tight")
