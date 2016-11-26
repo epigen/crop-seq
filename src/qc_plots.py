@@ -65,9 +65,12 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
 
     for n_genes in gene_thresholds:
         # Gather additional metrics from transcriptome:
-        exp = pd.read_csv(
-            os.path.join(sample.paths.sample_root, "digital_expression.{}genes.tsv".format(n_genes)),
-            sep="\t").set_index("GENE")
+        try:
+            exp = pd.read_csv(
+                os.path.join(sample.paths.sample_root, "digital_expression.{}genes.tsv".format(n_genes)),
+                sep="\t").set_index("GENE")
+        except IOError:
+            continue
         # reads per cell
         reads_per_cell = exp.sum(axis=0)
         stats.loc[sample_mask, "{}genes_total_used_reads".format(n_genes)] = reads_per_cell.sum()
@@ -139,12 +142,12 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
         # plot pairwise distributions of only assigned cells with good transcriptome
         combined_stats = pd.concat([
             reads_per_cell, genes_per_cell, mito_per_cell, ribo_per_cell, duplicates_per_cell.ix[reads_per_cell.index],  # transcriptome stats
-            sample_assignments['score'].ix[reads_per_cell.index],  # grna stats for matching cells
+            sample_assignments['score'].ix[reads_per_cell.index], sample_assignments['concordance_ratio'].ix[reads_per_cell.index],  # grna stats for matching cells
             grnas_per_cell.ix[reads_per_cell.index], assignments_per_cell.ix[reads_per_cell.index]  # grna stats for matching cells
         ], 1).dropna()
         combined_stats.columns = [
             "reads_per_cell", "genes_per_cell", "mito_per_cell", "ribo_per_cell", "duplicates_per_cell",
-            "grna_bp_covered_per_cell", "grna_molecules_per_cell", "detected_grnas_per_cell"]
+            "grna_bp_covered_per_cell", "grna_concordance_ratio_per_cell", "grna_molecules_per_cell", "detected_grnas_per_cell"]
         combined_stats.to_csv(
             os.path.join(results_dir, "stats.{}.{}genes.all_stats_per_cell.csv".format(sample.name, n_genes)), index=True)
 
@@ -152,6 +155,9 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
         g.fig.savefig(
             os.path.join(results_dir, "stats.{}.{}genes.pairwise_dists.all_assigned.svg".format(sample.name, n_genes)),
             bbox_inches="tight")
+        g.fig.savefig(
+            os.path.join(results_dir, "stats.{}.{}genes.pairwise_dists.all_assigned.png".format(sample.name, n_genes)),
+            bbox_inches="tight", dpi=300)
 
         # Number of genes assigned depending on the minimum number of genes required
         for metric in ["genes_per_cell", "reads_per_cell"]:
@@ -292,7 +298,7 @@ fig.savefig(os.path.join(results_dir, "stats.selected.heatmap.svg"), bbox_inches
 
 
 # only for unmerged samples
-sel_samples = [s.name for s in prj.samples if hasattr(s, "replicate")]
+sel_samples = [s.name for s in prj.samples if hasattr(s, "replicate") and s.name in stats_sel.columns]
 
 fig, axis = plt.subplots(3, 1, figsize=(18, 18), gridspec_kw = {'height_ratios': [0.8, 4.1, 4.1]})
 sns.heatmap(stats_sel[sel_samples].ix[g1], ax=axis[0], annot=True, fmt='.0f', square=True)
@@ -306,13 +312,22 @@ for ax in axis:
 fig.savefig(os.path.join(results_dir, "stats.selected.unmerged.heatmap.svg"), bbox_inches="tight")
 
 
+fig, axis = plt.subplots(1, figsize=(18, 18))
+sns.heatmap(stats_sel[sel_samples].ix[g1 + g2 + g3].apply(
+    lambda x: (x - x.min()) / (x.max() - x.min()), axis=1),
+    # lambda x: (x - x.mean()) / x.std(), axis=1),
+    ax=axis, annot=True, fmt='.2f', square=True)
+axis.set_xticklabels(axis.get_xticklabels(), rotation=90)
+axis.set_yticklabels(axis.get_yticklabels(), rotation=0)
+fig.savefig(os.path.join(results_dir, "stats.selected.unmerged.heatmap.standard_score.svg"), bbox_inches="tight")
+
 #
 
 #
 
 # Figure 1h
 # select metrics to show in main figure
-
+sel_samples = [s.name for s in prj.samples if hasattr(s, "replicate") and s.name in stats_sel.columns]
 metrics = [
     "input_file read1",
     "surviving filtering %",
@@ -329,9 +344,9 @@ stats_sel = stats.set_index("sample_name").T.ix[metrics].astype(float)
 prj.sheet.df.groupby(["experiment", "condition"])
 
 for group, rows in prj.sheet.df.groupby(["experiment", "condition"]):
-    means = stats_sel[rows['sample_name']].mean(axis=1)
-    means["input_file read1"] = stats_sel[rows['sample_name']].ix["input_file read1"].sum()
-    means["DigitalExpression_500genes number_cells"] = stats_sel[rows['sample_name']].ix["DigitalExpression_500genes number_cells"].sum()
+    means = stats_sel[sel_samples].mean(axis=1)
+    means["input_file read1"] = stats_sel[sel_samples].ix["input_file read1"].sum()
+    means["DigitalExpression_500genes number_cells"] = stats_sel[sel_samples].ix["DigitalExpression_500genes number_cells"].sum()
     stats_sel["_".join(group) + "_mean"] = means
 
 names = [
@@ -369,7 +384,7 @@ axis.set_xticklabels(axis.get_xticklabels(), visible=False)
 axis.set_yticklabels(axis.get_yticklabels(), visible=False)
 axis.axis('scaled')
 sns.despine(top=True, right=True, left=True, bottom=True)
-fig.savefig(os.path.join(results_dir, "stats.selected.bubbles.svg"), bbox_inches="tight")
+fig.savefig(os.path.join(results_dir, "figures", "stats.selected.bubbles.svg"), bbox_inches="tight")
 
 
 #
@@ -461,7 +476,7 @@ for sample in prj.samples:
     axis.set_xlabel("Genes covered per cell")
     axis.set_ylabel("Percentage of all cells")
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "stats.{}.grna_assignemnt.various_thresholds.svg".format(sample.name)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "figures", "stats.{}.grna_assignemnt.various_thresholds.svg".format(sample.name)), bbox_inches="tight")
 
 
 #
