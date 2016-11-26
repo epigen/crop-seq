@@ -269,10 +269,10 @@ def make_assignment(reads, guide_annotation):
 
     # concordance between reads in same cell
     scores['concordance_ratio'] = scores.drop(["assignment", "score"], axis=1).apply(
-        lambda x: x / sum(x), axis=1).replace({0.0: pd.np.nan}).sum(axis=1)
+        lambda x: x / sum(x), axis=1).max(axis=1)
 
     # Get assigned cells
-    assignment = scores.reset_index()[["cell", "assignment", "score"]]
+    assignment = scores.reset_index()[["cell", "assignment", "score", "concordance_ratio"]]
 
     # Convert to coverage in X times (divide by length of gRNA)
     coverage = scores.drop(['assignment', 'score'], axis=1).apply(
@@ -458,34 +458,3 @@ for sample in [s for s in prj.samples if s.name == "CROP-seq_HEK293T_1_resequenc
     axis.set_xlim((0, len(u6) + 20 + len(rest) + 50))
     sns.despine(fig)
     fig.savefig(os.path.join("results", "figures", "fig1g.reads.stacked.svg"), bbox_inches="tight")
-
-    # transform to percentage of total in each bin
-
-    histogram_arrays, bins, patches = axis.hist(
-        read_data,
-        bins=range(0, len(u6) + 20 + len(rest), 10),
-        normed=True)
-
-    histogram_arrays = np.array(histogram_arrays)
-    histogram_arrays_norm = np.zeros(histogram_arrays.shape)
-
-    fig, axis = plt.subplots(1, 1, sharex=True)
-    c = colors[:3] + ["grey"]
-    for i in range(histogram_arrays.shape[0]):
-        for j in range(histogram_arrays.shape[1]):
-            histogram_arrays_norm[i, j] = (histogram_arrays[i][j]) / (histogram_arrays[np.delete(np.arange(histogram_arrays.shape[0]), i), j].sum())
-
-        extra = {"bottom": histogram_arrays_norm[i - 1, ]} if i > 0 else {}
-
-        histogram_arrays_norm[i][histogram_arrays_norm[i] == np.inf] = 1
-
-        axis.bar(
-            bins[:-1], height=histogram_arrays_norm[i], width=8,
-            color=c[i], **extra)
-
-    for coor, name in [(0, "startU6"), (len(u6), "start gRNA"), (len(u6) + 20, "start backbone"), (len(u6) + 20 + len(rest), "start polyA")]:
-        axis.axvline(coor, 0, 1, linewidth=3, color="black", linestyle="--")
-        axis.text(coor, 0.01, name)
-    axis.set_xlim((0, len(u6) + 20 + len(rest) + 50))
-    sns.despine(fig)
-    fig.savefig(os.path.join("results", "figures", "fig1g.reads.stacked.norm.svg"), bbox_inches="tight")

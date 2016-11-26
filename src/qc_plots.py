@@ -20,7 +20,7 @@ matplotlib.rc('text', usetex=False)
 
 
 # Start project, add samples
-prj = Project(os.path.join("metadata", "config.separate.yaml"))
+prj = Project(os.path.join("metadata", "config.yaml"))
 prj.add_sample_sheet()
 prj.paths.results_dir = results_dir = os.path.join("results")
 
@@ -45,6 +45,8 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
         stats.loc[sample_mask, "total_grna_assigned_cells"] = sample_assignments.index.drop_duplicates().shape[0]
         # average number of bps covered per cell
         stats.loc[sample_mask, "mean_grna_basepairs_covered"] = sample_assignments['score'].mean()
+        # average number of bps covered per cell
+        stats.loc[sample_mask, "mean_concordance_ratio"] = sample_assignments['concordance_ratio'].mean()
     except IOError:
         pass  # if error, it will automatically be pd.np.nan
     try:
@@ -377,7 +379,11 @@ fig.savefig(os.path.join(results_dir, "stats.selected.bubbles.svg"), bbox_inches
 
 # Figure 1i
 
+# sample_name = "CROP-seq_HEK293T_1_resequenced"
+# sample = [s for s in prj.samples if s.name == sample_name][0]
+
 for sample in prj.samples:
+    print(sample)
     try:
         exp_counts = pd.read_csv(os.path.join(sample.paths.sample_root, "digital_expression.summary.100genes.tsv"), sep="\t", skiprows=2)
         exp_counts = exp_counts.drop("NUM_TRANSCRIPTS", axis=1).set_index("CELL_BARCODE").squeeze()
@@ -386,12 +392,14 @@ for sample in prj.samples:
         continue
 
     # Assign
-    # unique reads per cell
-    u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
-    # filter out reads in wrong strand
-    u = u[u['strand_agreeement'] == 1]
-    # get unique reads per cell
-    u = reads.ix[reads[["cell", 'molecule']].drop_duplicates().index]
+    # process
+    u = reads.groupby(
+        ['cell', 'molecule', 'chrom'])[
+        'read_start', 'read_end', 'distance', 'overlap', 'inside', 'mapping_quality', 'strand_agreeement'].max().reset_index()
+    # further reduce molecules by solving chromosome conflicts (assign molecule to chromosome with maximum overlap)
+    uu = u.ix[u.groupby(['cell', 'molecule']).apply(lambda x: x['overlap'].argmax())]
+    # remove no overlaps and reads in wrong strand
+    u = uu[uu['strand_agreeement'] == 1]
 
     # Get a score (sum of bp covered)
     scores = u.groupby(["cell", 'chrom'])['overlap'].sum()
@@ -399,29 +407,36 @@ for sample in prj.samples:
 
     # assign (get max)
     scores["assignment"] = scores.apply(np.argmax, axis=1)
-    scores["score"] = scores[list(set(reads['chrom']))].apply(max, axis=1)
-    # give nan to cells with no overlap (this is because argmax picks a draw)
+    scores["score"] = scores[list(set(u['chrom']))].apply(max, axis=1)
+    # give nan to cells with no overlap (this is because argmax pickus a draw)
     scores.loc[scores['score'] == 0, 'assignment'] = pd.np.nan
     scores.loc[scores['score'] == 0, 'score'] = pd.np.nan
 
     # Get only assigned cells
     scores = scores.dropna()
 
+    # concordance between reads in same cell
+    scores['concordance_ratio'] = scores.drop(["assignment", "score"], axis=1).apply(
+        lambda x: x / sum(x), axis=1).max(axis=1)
+
     counts = pd.DataFrame()
-    for threshold in [125, 250, 500, 1000, 2000, 4000, 8000]:
+    fig, axis = plt.subplots(3, 3, sharex=True, figsize=(12, 12))
+    for i, threshold in enumerate([125, 250, 500, 1000, 2000, 4000, 8000]):
         # Get cells with that many genes
         scores_in = scores[scores.index.isin(exp_counts[exp_counts > threshold].index)]
         print(threshold, scores_in.shape[0])
+
+        s = scores_in.join(exp_counts).dropna()
+        axis.flat[i].scatter(np.log2(s['NUM_GENES']), s['concordance_ratio'])
+        axis.flat[i].set_title("Cells with at least {} genes.\nMean concordance: {}".format(threshold, s['concordance_ratio'].mean()))
 
         if scores_in.shape[0] == 0:
             break
 
         # Quantify
-        # concordance between reads in same cell
-        concordance_ratio = scores_in.drop(["assignment", "score"], axis=1).apply(lambda x: x / sum(x), axis=1).replace({0.0: pd.np.nan})
-
         # in how many cells is the dominant gRNA dominanting by less than 3 times than itself?
-        fold = scores_in.drop(["assignment", "score"], axis=1).apply(lambda x: [x[y] / float(sum(x.drop(y))) for y in x.index], axis=1).replace({np.inf: 10}).max(1)
+        fold = scores_in.drop(["assignment", "score", "concordance_ratio"], axis=1).apply(
+            lambda x: [(x[y] + 1) / (float(sum(x.drop(y))) + 1) for y in x.index], axis=1).max(1)
 
         counts.loc["not assigned", threshold] = exp_counts[exp_counts > threshold].shape[0] - scores_in.shape[0]
         counts.loc["% not assigned", threshold] = (counts.loc["not assigned", threshold] / float(exp_counts[exp_counts > threshold].shape[0])) * 100
@@ -431,6 +446,9 @@ for sample in prj.samples:
         counts.loc["% impurities", threshold] = ((fold < 3).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
     counts.columns.name = "genes_covered"
     counts.index.name = "metric"
+
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "stats.{}.grna_assignemnt.mean_concordance_vs_genes.various_thresholds.svg".format(sample.name)), bbox_inches="tight")
 
     fig, axis = plt.subplots(1)
     sns.barplot(
@@ -453,15 +471,19 @@ for sample in prj.samples:
 # Supplementary Figure 3g
 
 # Read locations within transcripts
-# read refFlat
-ref = pd.read_csv(os.path.join("spiked_genomes", "hg38_spiked", "Homo_sapiens.GRCh38.dna.primary_assembly.spiked.refFlat"), sep="\t", header=None)
-ref = ref[range(6)]
-ref.columns = ["gene_id", "transcript_id", "chrom", "strand", "start", "end"]
 
-ref2 = ref.groupby(["gene_id", "chrom"])["end"].max()
+# sample_name = "CROP-seq_HEK293T_1_resequenced"
+# sample = [s for s in prj.samples if s.name == sample_name][0]
 
 dists = dict()
-for sample in [s for s in prj.samples if s.genome == "human"]:
+for sample in [w for w in prj.samples if s.genome == "human"]:
+
+    # read refFlat
+    ref = pd.read_csv(os.path.join("spiked_genomes", "hg38_spiked_HEKlibrary", "Homo_sapiens.GRCh38.dna.primary_assembly.spiked.refFlat"), sep="\t", header=None)
+    ref = ref[range(6)]
+    ref.columns = ["gene_id", "transcript_id", "chrom", "strand", "start", "end"]
+    ref2 = ref.groupby(["gene_id", "chrom"])["end"].max()
+
     # bam file
     bam = pysam.AlignmentFile(os.path.join("results_pipeline", sample.name, "star_gene_exon_tagged.clean.bam"))
     # iterate through reads, get read position
@@ -503,4 +525,4 @@ for sample in [s for s in prj.samples if s.genome == "human"]:
 
     axis.set_xlim(-10, 10000)
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "stats.{}.read_lengths.svg".format(sample.name)), bbox_inches="tight")
+    fig.savefig(os.path.join("results", "figures", "stats.{}.read_lengths.svg".format(sample.name)), bbox_inches="tight")
