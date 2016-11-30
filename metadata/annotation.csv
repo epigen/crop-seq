@@ -1,5 +1,5 @@
 sample_name,experiment,condition,replicate,daily_run_number,grna_library,library,organism,cell_type,flowcell,lane,BSF_name,data_source,bead_count_replicate1,bead_count_replicate2,squares_per_replicate,H2O_ul,total_beads,total_cell_estimation,beads_per_ul,desired_cells_per_20ul,resusp_pellet_ul,pcr_cycles,cell_clone
-Drop-seq_HEK293T-3T3,,,,,,Drop-seq,humanmouse,HEK293T-3T3,BSF_0249_000000000-ARE2L,1,DROP_0001_HEK_3T3_S16932,bsf_samples,,,,,,,,,,,
+Drop-seq_HEK293T-3T3,,,,,,Drop-seq,humanmouse,HEK293T-3T3,BSF_0249_000000000-ARE2L,1,DROP_0001_HEK_3T3_S16932,bsf_samples,,,,,,6969,,,,,
 CROP-seq_HEK293T_1,,,,,HEKlibrary,Drop-seq,human_hek,HEK293T,BSF_0222_000000000-AMPDE,1,HEK293T_Cas9_S14170,bsf_samples,,,,,,,,,,,
 CROP-seq_HEK293T_1_resequenced,CROP-seq_HEK_test,,1,,HEKlibrary,Drop-seq,human_hek,HEK293T,BSF_0225_H5W5LBBXX,6,CROPseq1_pool2_S14606,bsf_samples,,,,,,,,,,,
 CROP-seq_Jurkat_TCR_stimulated,,stimulated,,,Tcrlibrary,Drop-seq,human_tcr,Jurkat,,,,,,,,,,,,,,,
