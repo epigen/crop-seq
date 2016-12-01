@@ -1135,144 +1135,169 @@ def stimulation_signature(assignment, df, experiment="CROP-seq_Jurkat_TCR", n_ge
     fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.mean_group_signature_deviation.ranklog2.scatter.svg".format(experiment, n_genes)), bbox_inches="tight")
 
 
-def gather_scde(assignment, N=250):
+def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500, conds=["stimulated", "unstimulated"]):
     """
     """
-    fold = pd.DataFrame()
+    def get_level_colors(index):
+        pallete = sns.color_palette("colorblind") * int(1e6)
 
-    # remove opposite gRNA library
-    if "TCR" in prefix:
-        assignment = assignment[~assignment['assignment'].str.contains("Wnt")]
-    elif "WNT" in prefix:
-        assignment = assignment[~assignment['assignment'].str.contains("Tcr")]
+        colors = list()
 
-    for condition in ["unstimulated"]:
-        for gene in assignment[assignment['experiment_group'] == experiment]["group"].unique()[2:-7]:
-            if gene in ["Essential", "CTRL"]:
+        if hasattr(index, "levels"):
+            for level in index.levels:
+                color_dict = dict(zip(level, pallete))
+                level_colors = [color_dict[x] for x in index.get_level_values(level.name)]
+                colors.append(level_colors)
+        else:
+            color_dict = dict(zip(set(index), pallete))
+            index_colors = [color_dict[x] for x in index]
+            colors.append(index_colors)
+
+        return colors
+
+    scde_output = pd.DataFrame()
+
+    for condition in conds:
+        for gene in assignment["gene"].drop_duplicates():
+            if gene in ["library", "CTRL"]:
                 continue
 
             # Read up deg
-            print(gene)
+            print(condition, gene)
             try:
                 degs = pd.read_csv(
-                    os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.CROP-seq_Jurkat_TCR_{}.{}.diff_expr.csv".format(condition, gene))
+                    os.path.join(results_dir, "{}.digital_expression.{}genes.scde.diff_expr.{}.{}.csv".format(experiment, n_genes, condition, gene))
                 )
-            except:
+            except IOError:
                 print("Skipping {} {}".format(condition, gene))
                 continue
+            degs["experiment"] = experiment
+            degs["n_genes"] = n_genes
             degs["condition"] = condition
             degs["gene"] = gene
-            fold = fold.append(degs)
+            degs = degs.rename(columns={gene + "_posterior": "gene_posterior"})
+            scde_output = scde_output.append(degs.reset_index())
 
             enr = enrichr(degs.reset_index().rename(columns={"index": "gene_name"}).head(N))
             enr.to_csv(os.path.join(
                 results_dir,
-                "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.{}.{}.enrichr.diff_expr.csv".format(condition, gene)), index=False, encoding="utf8")
+                "{}.digital_expression.{}genes.scde.diff_expr.{}.{}.enrichr.csv".format(experiment, n_genes, condition, gene)), index=False, encoding="utf8")
+
+    # Calculate A and if sig
+    scde_output["A"] = np.log2(scde_output["gene_posterior"] * scde_output["CTRL_posterior"]) / 2.
+    scde_output["sig"] = (abs(scde_output["cZ"]) > 2)
+
+    scde_output = scde_output.set_index("index")
 
     # Filter out gRNAs
-    fold = fold[~fold.index.str.contains("library")]
+    scde_output = scde_output[~scde_output.index.str.contains("library|_gene")]
+
+    scde_output.to_csv(os.path.join(
+        results_dir,
+        "{}.digital_expression.{}genes.scde.knockouts.all_conditions_genes.csv".format(experiment, n_genes)), index=False, encoding="utf8")
 
     # get top N differential genes
-    fold["absZ"] = abs(fold["Z"])
-    g = fold.groupby(['condition', 'gene'])['absZ'].nlargest(150)
-    genes = g.index.get_level_values(2).unique()
+    scde_output["absZ"] = abs(scde_output["Z"])
+    g = scde_output.groupby(['condition', 'gene'])['absZ'].nlargest(N)
+    genes = g.index.get_level_values("index").unique()
 
-    fold["id"] = fold["condition"] + fold["gene"]
+    scde_output["id"] = scde_output["condition"] + scde_output["gene"]
 
     # create pivot table of fold-changes
-    fold_pivot = pd.pivot_table(fold.drop_duplicates().reset_index(), index="index", columns="id", values="Z").dropna()
-    fold_pivot.to_csv(os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.diff_expr.csv".format(condition, gene)), index=True)
+    scde_pivot = pd.pivot_table(scde_output.drop_duplicates().reset_index(), index="index", columns="id", values="Z").dropna()
+    scde_pivot.to_csv(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.csv".format(experiment, n_genes, N)), index=True)
 
     # Cluster on fold-changes
     g = sns.clustermap(
-        fold_pivot.ix[genes].dropna(),
+        scde_pivot.ix[genes].dropna(),
         # robust=True,
         row_cluster=True, col_cluster=True,
         yticklabels=False, xticklabels=True,
-        # metric="correlation",
+        metric="correlation",
         figsize=(15, 15))
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.fold_change.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.fold_change.clustering.png".format(experiment, n_genes, N)), bbox_inches="tight", dpi=300)
 
     # Cluster on original expression
     g = sns.clustermap(
-        df.ix[genes].dropna()[np.random.choice(df.columns, 2000)],
+        matrix_norm.ix[genes],
         robust=True,
+        metric="correlation",
+        col_colors=get_level_colors(matrix_norm.columns),
         row_cluster=True, col_cluster=True,
         yticklabels=False, xticklabels=False,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.expression.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.expression.clustering.png".format(experiment, n_genes, N)), bbox_inches="tight", dpi=300)
+
     g = sns.clustermap(
-        fold_pivot.ix[genes].corr(),
-        # metric="euclidean",
+        scde_pivot.ix[genes].corr(),
+        metric="correlation",
+        col_colors=get_level_colors(matrix_norm.columns),
+        row_colors=get_level_colors(matrix_norm.columns),
         row_cluster=True, col_cluster=True,
         yticklabels=True, xticklabels=False,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
-    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.expression.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.expression.clustering.correlation.png".format(experiment, n_genes, N)), bbox_inches="tight", dpi=300)
 
     # Cluster groups on genes
-    df = df.T
-    # Annotate cells with stimulus and gRNA assignment
-    cell_names = df.index.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-
-    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
-    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
-
-    df2 = df[~df["ass"].isin(["Unassigned", "Essential"])]
-
-    # get condition/gene mean expression for every gene
-    group_means = df2.groupby(["sti", "ass"]).mean().dropna().T
+    mean_matrix_norm = matrix_norm.T.groupby(level=['condition', 'gene']).mean().T
 
     # cluster mean gene expression
     g = sns.clustermap(
-        group_means.ix[genes].dropna(),
-        z_score=0,
-        robust=True,
+        mean_matrix_norm.ix[genes],
+        metric="correlation",
+        col_colors=get_level_colors(matrix_norm.columns),
         row_cluster=True, col_cluster=True,
         yticklabels=False, xticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.group_expression.clustering.png".format(experiment, n_genes, N)), bbox_inches="tight", dpi=300)
+
     # correlation
     g = sns.clustermap(
-        group_means.ix[genes].dropna().corr(),
+        mean_matrix_norm.ix[genes].corr(),
+        metric="correlation",
+        col_colors=get_level_colors(matrix_norm.columns),
+        row_colors=get_level_colors(matrix_norm.columns),
         row_cluster=True, col_cluster=True,
         yticklabels=True, xticklabels=False,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
-    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.group_expression.clustering.correlation.png".format(experiment, n_genes, N)), bbox_inches="tight", dpi=300)
 
     # cluster
+    m1 = mean_matrix_norm.T.ix[mean_matrix_norm.T.index[mean_matrix_norm.T.index.get_level_values('condition') == conds[0]]].T
     g = sns.clustermap(
-        group_means["un"].ix[genes].dropna(),
-        z_score=0,
-        metric="euclidean",
+        m1.ix[genes],
+        col_colors=get_level_colors(m1.columns),
+        metric="correlation",
         robust=True,
         row_cluster=True, col_cluster=True,
         yticklabels=False, xticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.unstimulated.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.group_expression.{}.clustering.png".format(experiment, n_genes, N, conds[0])), bbox_inches="tight", dpi=300)
+
+    m2 = mean_matrix_norm.T.ix[mean_matrix_norm.T.index[mean_matrix_norm.T.index.get_level_values('condition') == conds[0]]].T
     g = sns.clustermap(
-        group_means["st"].ix[genes].dropna(),
-        z_score=0,
-        metric="euclidean",
+        m2.ix[genes],
+        col_colors=get_level_colors(m2.columns),
+        metric="correlation",
         robust=True,
         row_cluster=True, col_cluster=True,
         yticklabels=False, xticklabels=True,
         figsize=(15, 15))
     for item in g.ax_heatmap.get_xticklabels():
         item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_signatures.{}.scde.group_expression.stimulated.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.group_expression.{}.clustering.png".format(experiment, n_genes, N, conds[1])), bbox_inches="tight", dpi=300)
 
     # Cluster enrichments
     enrichments = pd.DataFrame()
@@ -1346,218 +1371,6 @@ def gather_scde(assignment, N=250):
         g.fig.savefig(os.path.join(
             results_dir,
             "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.{}.p_value.pdf".format(gene_set_library)), bbox_inches="tight")
-
-
-def explore_knockouts(df, assignment, prefix=""):
-    """
-    """
-    df = df.T
-
-    # Annotate cells with stimulus and gRNA assignment
-    cell_names = df.index.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-
-    df["ass"] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=df.index).astype("category")
-    df["sti"] = pd.Series([x[:2] for x in df.index], index=df.index).astype("category")
-
-    df2 = df[~df["ass"].isin(["Unassigned", "Essential"])]
-
-    # get condition/gene mean expression for every gene
-    group_means = df2.groupby(["sti", "ass"]).mean().dropna().T
-    group_means.to_csv(os.path.join(results_dir, "knockout_combination.mean_expression.{}.csv".format(prefix)))
-
-    # filter for groups with more than n cells
-    c = df2.groupby(["sti", "ass"]).apply(len)
-    group_means = group_means[c[c >= np.percentile(c, 5)].index]
-
-    p = group_means.ix[[x for x in group_means.columns.levels[1].tolist() if x in group_means.index]]
-    g = sns.clustermap(
-        p,
-        robust=True,
-        col_colors=get_group_colors(p, assignment),
-        metric='correlation',
-        row_cluster=True, col_cluster=True,
-        xticklabels=True, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    for item in g.ax_heatmap.get_xticklabels():
-        item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.svg".format(prefix)), bbox_inches="tight")
-
-    g = sns.clustermap(
-        p,
-        z_score=0,
-        robust=True,
-        col_colors=get_group_colors(p, assignment),
-        metric='correlation',
-        row_cluster=True, col_cluster=True,
-        xticklabels=True, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    for item in g.ax_heatmap.get_xticklabels():
-        item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.z_score.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.z_score.svg".format(prefix)), bbox_inches="tight")
-
-    # Compare difference between conditions
-    group_differences = (group_means["st"] - group_means["un"])
-    group_differences = group_differences[group_differences.isnull().all()[~group_differences.isnull().all()].index]
-
-    p = group_differences.ix[[x for x in group_differences.columns.tolist() if x in group_differences.index]]
-    g = sns.clustermap(
-        p,
-        robust=True,
-        metric='correlation',
-        row_cluster=True, col_cluster=True,
-        xticklabels=True, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    for item in g.ax_heatmap.get_xticklabels():
-        item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.svg".format(prefix)), bbox_inches="tight")
-
-    g = sns.clustermap(
-        p,
-        z_score=0,
-        robust=True,
-        metric='correlation',
-        row_cluster=True, col_cluster=True,
-        xticklabels=True, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    for item in g.ax_heatmap.get_xticklabels():
-        item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.z_score.png".format(prefix)), bbox_inches="tight", dpi=300)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.stimulation_difference.z_score.svg".format(prefix)), bbox_inches="tight")
-
-    # Swarmplots of GATA3, RUNX1, ETS1, EGR1 expression in the two conditions
-    fig, axis = plt.subplots(2, figsize=(14, 8))
-    sns.violinplot(x="sti", y="GATA3", data=df2, hue="ass")
-    sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.GATA3_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
-    fig, axis = plt.subplots(2, figsize=(14, 8))
-    sns.violinplot(x="sti", y="ETS1", data=df2, hue="ass")
-    sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.ETS1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
-    fig, axis = plt.subplots(2, figsize=(14, 8))
-    sns.violinplot(x="sti", y="RUNX1", data=df2, hue="ass")
-    sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.RUNX1_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
-    # Also IL2
-    fig, axis = plt.subplots(2, figsize=(14, 8))
-    sns.violinplot(x="sti", y="IL2", data=df2, hue="ass")
-    sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.own_knockouts.IL2_expression.boxplot.svg".format(prefix)), bbox_inches="tight")
-
-    #
-
-    # All differential genes
-    # load all files, select top N significant, append to list
-    n = 50
-    genes = list()
-    for gene in assignment["group"].unique():
-        try:
-            t = pd.read_csv(os.path.join(results_dir, "differential_expression.{}_onevsctrl.{}.stimutation.csv".format(experiment, gene)))
-        except:
-            print("Gene {}".format(gene))
-            continue
-        genes += t.ix[abs(t[t["q_value"] < 0.05]["fold_change"]).sort_values().tail(n).index]["gene"].tolist()
-    genes = pd.Series(genes).drop_duplicates()
-
-    p = group_means.ix[genes]
-    g = sns.clustermap(
-        p,
-        robust=True,
-        col_colors=get_group_colors(p, assignment),
-        metric='correlation',
-        row_cluster=True, col_cluster=True,
-        xticklabels=True, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    for item in g.ax_heatmap.get_xticklabels():
-        item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.png".format(prefix)), bbox_inches="tight", dpi=300)
-    # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.svg".format(prefix)), bbox_inches="tight")
-
-    g = sns.clustermap(
-        p,
-        z_score=0,
-        robust=True,
-        col_colors=get_group_colors(p, assignment),
-        metric='correlation',
-        row_cluster=True, col_cluster=True,
-        xticklabels=True, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    for item in g.ax_heatmap.get_xticklabels():
-        item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.z_score.png".format(prefix)), bbox_inches="tight", dpi=300)
-    # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.z_score.svg".format(prefix)), bbox_inches="tight")
-
-    g = sns.clustermap(
-        p[p.sum(0).sort_values().index],
-        z_score=0,
-        robust=True,
-        col_colors=get_group_colors(p, assignment),
-        metric='correlation',
-        row_cluster=True, col_cluster=False,
-        xticklabels=True, yticklabels=True,
-        figsize=(15, 15))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-    for item in g.ax_heatmap.get_xticklabels():
-        item.set_rotation(90)
-    g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.sorted.png".format(prefix)), bbox_inches="tight", dpi=300)
-    # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.mean_expression.degs.z_score.svg".format(prefix)), bbox_inches="tight")
-
-    # load each files, select top X significant, append to list
-    enrichments = pd.DataFrame()
-    for gene in assignment["group"].unique():
-        try:
-            t = pd.read_csv(os.path.join(results_dir, "differential_expression.{}_onevsctrl.{}.stimutation.csv".format(experiment, gene)))
-        except:
-            print("Gene {}".format(gene))
-            continue
-        print(gene)
-        d = t[t["q_value"] < 0.05].rename(columns={"gene": "gene_name"})
-        if d.shape[0] < 4:
-            continue
-        enr = enrichr(d)
-        enr["knockout_gene"] = gene
-
-        enrichments = enrichments.append(enr)
-    enrichments.to_csv(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)), index=False, encoding="utf8")
-    enrichments = pd.read_csv(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)))
-
-    for gene_set_library in enrichments["gene_set_library"].unique():
-
-        d = enrichments[enrichments["gene_set_library"] == gene_set_library]
-
-        d_ = pd.pivot_table(d, index="description", columns="knockout_gene", values="combined_score")
-
-        # select terms enriched in most knockouts
-        g = sns.clustermap(
-            # d_.ix[d_.mean(1).sort_values().tail(35).index].fillna(0),
-            d_.ix[(np.nanstd(d_, 1) / d_.sum(1)).sort_values().tail(35).index].fillna(0),
-            # z_score=0,
-            robust=True,
-            row_cluster=True, col_cluster=True,
-            xticklabels=True, yticklabels=True,
-            figsize=(15, 15))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
-        g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.{}.png".format(prefix, gene_set_library)), bbox_inches="tight", dpi=300)
-        # g.fig.savefig(os.path.join(results_dir, "knockout_combination.{}.degs.enrichr.csv".format(prefix)), bbox_inches="tight")
 
 
 def plot_genes():
