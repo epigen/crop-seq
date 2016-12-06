@@ -255,7 +255,7 @@ g2 = [
 
     # efficiency
     "DigitalExpression_500genes total_used_reads %",
-    "DigitalExpression_500genes percent_unique_umis"]
+    "500genes percent_unique_umis"]
 if odds:
     g2 += ["500genes change_observed_expected number_cells"]
 
@@ -281,7 +281,7 @@ g3 = [
 
 
 metrics = g1 + g2 + g3
-stats_sel = stats.set_index("sample_name").T.ix[metrics].astype(float)
+stats_sel = stats.T.ix[metrics].astype(float)
 stats_sel.to_csv(os.path.join(results_dir, "stats.selected.csv"), index=True)
 
 # plot selected metrics
@@ -331,13 +331,13 @@ metrics = [
     "input_file read1",
     "surviving filtering %",
     "Alignment rate",
-    "DigitalExpression_500genes percent_unique_umis",
+    "500genes_percent_unique_umis",
     "DigitalExpression_500genes number_cells",
     "500genes_percent_grna_assigned_cells",
     "DigitalExpression_500genes reads_per_cell:mean",
     "DigitalExpression_500genes 1reads_to_coverage_:genes_per_cell:mean"
 ]
-stats_sel = stats.set_index("sample_name").T.ix[metrics].astype(float)
+stats_sel = stats.T.ix[metrics].astype(float)
 
 # get mean of unmerged Jurkat runs
 prj.sheet.df.groupby(["experiment", "condition"])
@@ -700,3 +700,40 @@ axis[1][0].set_ylabel("Density")
 axis[1][1].legend()
 sns.despine(fig)
 fig.savefig(os.path.join("results", "figures", "FigR1c.dropseq_quality.groups.simple.svg"), bbox_inches="tight")
+
+
+#
+
+#
+
+# Figure SX
+stats_sel = pd.read_csv(os.path.join(results_dir, "stats.selected.csv"), index_col=0)
+
+g1 = ["input_file read1"]
+
+g2 = [
+    "STAR Uniquely mapped reads %",
+    "STAR % of reads mapped to multiple loci",
+    "bead_synthesis_error %",
+    "500genes_percent_grna_assigned_cells",
+    "percent_unambiguous_grna_assignments"]
+g3 = [
+    "DigitalExpression_500genes number_cells",
+    "DigitalExpression_500genes reads_per_cell:mean",
+    "DigitalExpression_500genes 1reads_to_coverage_:genes_per_cell:mean",
+    "total_grna_assigned_cells",
+]
+
+# plot selected metrics
+sel_samples = [s.name for s in prj.samples if hasattr(s, "replicate") and s.name in stats_sel.columns]
+
+fig, axis = plt.subplots(3, 1, figsize=(18, 18), gridspec_kw = {'height_ratios': [0.8, 4.1, 4.1]})
+sns.heatmap(stats_sel[sel_samples].ix[g1], ax=axis[0], annot=True, fmt='.0f', square=True, cmap="Blues")
+sns.heatmap(stats_sel[sel_samples].ix[g2], ax=axis[1], annot=True, fmt='.1f', square=True, cmap="Blues", vmax=100.)
+sns.heatmap(stats_sel[sel_samples].ix[g3], ax=axis[2], annot=True, fmt='.1f', square=True, cmap="Blues")
+for ax in axis[:-1]:
+    ax.set_xticklabels(ax.get_xticklabels(), visible=False)
+axis[-1].set_xticklabels(axis[-1].get_xticklabels(), rotation=90)
+for ax in axis:
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+fig.savefig(os.path.join(results_dir, "figures", "stats.selected.heatmap.svg"), bbox_inches="tight")
