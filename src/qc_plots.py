@@ -265,7 +265,7 @@ g3 = [
     "DigitalExpression_500genes number_genes",
     "DigitalExpression_500genes reads_per_cell:mean",
     "DigitalExpression_500genes reads_per_cell:median",
-    "DigitalExpression_500genes reads_per_cell:std"
+    "DigitalExpression_500genes reads_per_cell:std",
     "DigitalExpression_500genes 1reads_to_coverage_:genes_per_cell:mean",
     "DigitalExpression_500genes 1reads_to_coverage_:genes_per_cell:median",
     "DigitalExpression_500genes 1reads_to_coverage_:genes_per_cell:std",
@@ -327,7 +327,6 @@ fig.savefig(os.path.join(results_dir, "stats.selected.unmerged.heatmap.standard_
 
 # Figure 1h
 # select metrics to show in main figure
-sel_samples = [s.name for s in prj.samples if hasattr(s, "replicate") and s.name in stats_sel.columns]
 metrics = [
     "input_file read1",
     "surviving filtering %",
@@ -344,9 +343,9 @@ stats_sel = stats.set_index("sample_name").T.ix[metrics].astype(float)
 prj.sheet.df.groupby(["experiment", "condition"])
 
 for group, rows in prj.sheet.df.groupby(["experiment", "condition"]):
-    means = stats_sel[sel_samples].mean(axis=1)
-    means["input_file read1"] = stats_sel[sel_samples].ix["input_file read1"].sum()
-    means["DigitalExpression_500genes number_cells"] = stats_sel[sel_samples].ix["DigitalExpression_500genes number_cells"].sum()
+    means = stats_sel[rows['sample_name'].tolist()].mean(axis=1)
+    means["input_file read1"] = stats_sel[rows['sample_name'].tolist()].ix["input_file read1"].sum()
+    means["DigitalExpression_500genes number_cells"] = stats_sel[rows['sample_name'].tolist()].ix["DigitalExpression_500genes number_cells"].sum()
     stats_sel["_".join(group) + "_mean"] = means
 
 names = [
@@ -541,3 +540,65 @@ for sample in [w for w in prj.samples if s.genome == "human"]:
     axis.set_xlim(-10, 10000)
     sns.despine(fig)
     fig.savefig(os.path.join("results", "figures", "stats.{}.read_lengths.svg".format(sample.name)), bbox_inches="tight")
+
+
+# Reviewer figure 1b
+for i, sample in enumerate([sample for sample in prj.samples if hasattr(sample, "replicate")]):
+    s = pd.read_csv(os.path.join(sample.paths.sample_root, "synthesis_statistics.summary.txt"), skiprows=6, sep="\t").set_index("SYNTHESIS_ERROR_BASE")
+    s.columns = [sample.name]
+    s.loc["Total", sample.name] = float(pd.read_csv(os.path.join(sample.paths.sample_root, "synthesis_statistics.summary.txt"), skiprows=2, sep="\t")["NUM_BEADS"].ix[0])
+    s.loc["No Error", sample.name] = float(pd.read_csv(os.path.join(sample.paths.sample_root, "synthesis_statistics.summary.txt"), skiprows=2, sep="\t")["NO_ERROR"].ix[0])
+
+    if i == 0:
+        errors = s
+    else:
+        errors = errors.join(s)
+
+# add macosko
+for name in ["Drop-seq_humanmouse_macosko", "Drop-seq_mouse_retina_macosko"]:
+    s = pd.read_csv(os.path.join("../", "dropseq_optimizations", "results_pipeline", name, "synthesis_statistics.summary.txt"), skiprows=6, sep="\t").set_index("SYNTHESIS_ERROR_BASE")
+    s.columns = [name]
+    s.loc["Total", name] = float(pd.read_csv(os.path.join("../", "dropseq_optimizations", "results_pipeline", name, "synthesis_statistics.summary.txt"), skiprows=2, sep="\t")["NUM_BEADS"].ix[0])
+    s.loc["No Error", name] = float(pd.read_csv(os.path.join("../", "dropseq_optimizations", "results_pipeline", name, "synthesis_statistics.summary.txt"), skiprows=2, sep="\t")["NO_ERROR"].ix[0])
+    errors = errors.join(s)
+
+errors = errors.fillna(0).sort_index()
+
+# transform to percentages
+errors_p = errors.apply(lambda x: (x / x[range(1, 9)].sum()) * 100., axis=0)
+
+p = pd.melt(errors_p.reset_index(), id_vars=['SYNTHESIS_ERROR_BASE'])
+
+p.loc[p['SYNTHESIS_ERROR_BASE'].apply(type) == int, 'SYNTHESIS_ERROR_BASE'] = abs(p[p['SYNTHESIS_ERROR_BASE'].apply(type) == int]['SYNTHESIS_ERROR_BASE'] - 9)
+p.loc[:, 'SYNTHESIS_ERROR_BASE'] = p['SYNTHESIS_ERROR_BASE'].replace(9, 0)
+
+p.loc[p['variable'].str.contains("_macosko"), "group"] = "Macosko"
+p.loc[p['variable'].str.contains("r[1-2]"), "group"] = "Datlinger - old beads"
+p.loc[p['variable'].str.contains("r[3-6]"), "group"] = "Datlinger - new beads"
+
+p = p.sort_values(["SYNTHESIS_ERROR_BASE", "group", "variable"], ascending=False)
+
+fig, axis = plt.subplots(1)
+sns.barplot(data=p[p['SYNTHESIS_ERROR_BASE'].apply(type) == int], x='SYNTHESIS_ERROR_BASE', y='value', hue='variable', ax=axis)
+axis.set_xlabel("Base number")
+axis.set_ylabel("Beads with errors in base (%)")
+sns.despine(fig)
+fig.savefig(os.path.join("results", "figures", "FigR1b.bead_errors.all_sample.svg"), bbox_inches="tight")
+
+fig, axis = plt.subplots(1)
+sns.barplot(data=p[p['SYNTHESIS_ERROR_BASE'].apply(type) == int], x='SYNTHESIS_ERROR_BASE', y='value', hue='group', ax=axis)
+axis.set_xlabel("Base number")
+axis.set_ylabel("Beads with errors in base (%)")
+sns.despine(fig)
+fig.savefig(os.path.join("results", "figures", "FigR1b.bead_errors.groups.svg"), bbox_inches="tight")
+
+p2 = p.copy()
+p2['value'] = 100 - p2['value']
+
+fig, axis = plt.subplots(1)
+sns.barplot(data=p2[p2['SYNTHESIS_ERROR_BASE'] == "No Error"], x='SYNTHESIS_ERROR_BASE', y='value', hue='group')
+axis.set_xlabel("Experiment group")
+axis.set_ylabel("Beads with errors (% of total)")
+axis.set_ylim((0, 100))
+sns.despine(fig)
+fig.savefig(os.path.join("results", "figures", "FigR1b.bead_errors.groups.simple.svg"), bbox_inches="tight")
