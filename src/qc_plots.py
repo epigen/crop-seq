@@ -542,6 +542,10 @@ for sample in [w for w in prj.samples if s.genome == "human"]:
     fig.savefig(os.path.join("results", "figures", "stats.{}.read_lengths.svg".format(sample.name)), bbox_inches="tight")
 
 
+#
+
+#
+
 # Reviewer figure 1b
 for i, sample in enumerate([sample for sample in prj.samples if hasattr(sample, "replicate")]):
     s = pd.read_csv(os.path.join(sample.paths.sample_root, "synthesis_statistics.summary.txt"), skiprows=6, sep="\t").set_index("SYNTHESIS_ERROR_BASE")
@@ -602,3 +606,97 @@ axis.set_ylabel("Beads with errors (% of total)")
 axis.set_ylim((0, 100))
 sns.despine(fig)
 fig.savefig(os.path.join("results", "figures", "FigR1b.bead_errors.groups.simple.svg"), bbox_inches="tight")
+
+
+#
+
+#
+
+# Reviewer figure 1c
+reads_per_cell = dict()
+genes_per_cell = dict()
+for i, sample in enumerate([sample for sample in prj.samples if hasattr(sample, "replicate")]):
+    for n_genes in [500]:
+        print(sample.name, n_genes)
+        # Gather additional metrics from transcriptome:
+        try:
+            exp = pd.read_csv(
+                os.path.join(sample.paths.sample_root, "digital_expression.{}genes.tsv".format(n_genes)),
+                sep="\t").set_index("GENE")
+        except IOError:
+            continue
+        # reads per cell
+        reads_per_cell[sample.name] = exp.sum(axis=0).values
+        # # genes per cell
+        genes_per_cell[sample.name] = exp.apply(lambda x: (x > 0).sum(), axis=0).values
+
+# add macosko
+for name in ["Drop-seq_humanmouse_macosko", "Drop-seq_mouse_retina_macosko"]:
+    for n_genes in [500]:
+        print(name, n_genes)
+        # Gather additional metrics from transcriptome:
+        try:
+            exp = pd.read_csv(
+                os.path.join("../", "dropseq_optimizations", "results_pipeline", name, "digital_expression.{}genes.tsv".format(n_genes)),
+                sep="\t").set_index("GENE")
+        except IOError:
+            continue
+        # reads per cell
+        reads_per_cell[name] = exp.sum(axis=0).values
+        # # genes per cell
+        genes_per_cell[name] = exp.apply(lambda x: (x > 0).sum(), axis=0).values
+
+
+names = pd.Series([q.name for q in prj.samples])
+groups = {
+    "Datlinger - old beads": names[names.str.contains("r[1-2]")],
+    "Datlinger - new beads": names[names.str.contains("r[3-6]")],
+    "Macosko - mix": ["Drop-seq_humanmouse_macosko"],
+    "Macosko - retina": ["Drop-seq_mouse_retina_macosko"],
+    "Macosko - both": ["Drop-seq_humanmouse_macosko", "Drop-seq_mouse_retina_macosko"],
+}
+
+fig, axis = plt.subplots(2, 2, figsize=(4 * 2, 4 * 2))
+for group, samples in groups.items():
+    sns.distplot(np.concatenate([reads_per_cell[k] for k in samples]), ax=axis[0][0], label=group)
+    sns.distplot(np.concatenate([genes_per_cell[k] for k in samples]), ax=axis[0][1], label=group)
+    sns.distplot(np.log2(np.concatenate([reads_per_cell[k] for k in samples])), ax=axis[1][0], label=group)
+    sns.distplot(np.log2(np.concatenate([genes_per_cell[k] for k in samples])), ax=axis[1][1], label=group)
+axis[0][0].set_title("Reads per cell")
+axis[0][1].set_title("Genes per cell")
+axis[0][0].set_xlabel("Reads per cell")
+axis[0][1].set_xlabel("Genes per cell")
+axis[1][0].set_xlabel("Reads per cell (log2)")
+axis[1][1].set_xlabel("Genes per cell (log2)")
+axis[0][0].set_ylabel("Density")
+axis[1][0].set_ylabel("Density")
+axis[1][1].legend()
+sns.despine(fig)
+fig.savefig(os.path.join("results", "figures", "FigR1c.dropseq_quality.groups.svg"), bbox_inches="tight")
+
+
+names = pd.Series([q.name for q in prj.samples])
+groups = {
+    "Datlinger - old beads": names[names.str.contains("r[1-2]")],
+    "Datlinger - new beads": names[names.str.contains("r[3-6]")],
+    "Macosko - mix": ["Drop-seq_humanmouse_macosko"],
+    "Macosko - retina": ["Drop-seq_mouse_retina_macosko"],
+}
+
+fig, axis = plt.subplots(2, 2, figsize=(4 * 2, 4 * 2))
+for group, samples in groups.items():
+    sns.distplot(np.concatenate([reads_per_cell[k] for k in samples]), ax=axis[0][0], label=group)
+    sns.distplot(np.concatenate([genes_per_cell[k] for k in samples]), ax=axis[0][1], label=group)
+    sns.distplot(np.log2(np.concatenate([reads_per_cell[k] for k in samples])), ax=axis[1][0], label=group)
+    sns.distplot(np.log2(np.concatenate([genes_per_cell[k] for k in samples])), ax=axis[1][1], label=group)
+axis[0][0].set_title("Reads per cell")
+axis[0][1].set_title("Genes per cell")
+axis[0][0].set_xlabel("Reads per cell")
+axis[0][1].set_xlabel("Genes per cell")
+axis[1][0].set_xlabel("Reads per cell (log2)")
+axis[1][1].set_xlabel("Genes per cell (log2)")
+axis[0][0].set_ylabel("Density")
+axis[1][0].set_ylabel("Density")
+axis[1][1].legend()
+sns.despine(fig)
+fig.savefig(os.path.join("results", "figures", "FigR1c.dropseq_quality.groups.simple.svg"), bbox_inches="tight")
