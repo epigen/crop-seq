@@ -3,8 +3,11 @@ library(ggplot2)
 library(reshape2)
 theme_set(theme_bw())
 
+
 data_dir="/scratch/lab_bock/shared/projects/crop-seq/results_pipeline/Drop-seq_HEK293T-3T3/"
 out_dir="/scratch/lab_bock/shared/projects/crop-seq/mixing_hum_mouse"
+
+
 dir.create(out_dir)
 
 refFlat=fread("/data/groups/lab_bock/shared/resources/genomes/hg19_mm10_transgenes/hg19_mm10_transgenes.refFlat",drop=c(7:11))
@@ -61,5 +64,9 @@ dev.off()
 #mouse vs. human
 pdf(paste0(out_dir,"/species_cor_g1.pdf"),height=6,width=5)
 ggplot(dge_wide_mean, aes(x=log10(g1.MOUSE),y=log10(g1.HUMAN),fill=species_dom.MOUSE,col=doublet))+geom_abline(slope=1)+geom_point(shape=21,alpha=0.4,size=2)+theme(legend.position="bottom")+ggtitle(paste0("doublet-estimate: ",round(double_frac,3)*100,"%"))+xlim(c(0,4))+ylim(c(0,4))+scale_color_manual(values=c("TRUE"="black","FALSE"="grey"))
+dev.off()
+
+pdf(paste0(out_dir,"/species_cor_g1_noLog.pdf"),height=6,width=5)
+ggplot(dge_wide_mean, aes(x=g1.MOUSE,y=g1.HUMAN,fill=species_dom.MOUSE,col=doublet))+geom_abline(slope=1)+geom_point(shape=21,alpha=0.4,size=2)+theme(legend.position="bottom")+ggtitle(paste0("doublet-estimate: ",round(double_frac,3)*100,"%"))+scale_color_manual(values=c("TRUE"="black","FALSE"="grey"))
 dev.off()
 
