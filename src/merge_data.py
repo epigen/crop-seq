@@ -5,7 +5,7 @@ import os
 import pandas as pd
 
 
-prj = Project(os.path.join("metadata", "config.separate.yaml"))
+prj = Project(os.path.join("metadata", "config.yaml"))
 prj.add_sample_sheet()
 prj.paths.results_dir = os.path.join("results")
 
@@ -13,6 +13,7 @@ prj.paths.results_dir = os.path.join("results")
 guide_annotation = pd.read_csv(os.path.join("metadata", "guide_annotation.csv"))
 
 
+# Gather gRNA assignment info across all samples used
 for experiment, rows in prj.sheet.df.groupby(['experiment']):
     # merge gRNA data
     reads = pd.DataFrame()
@@ -21,9 +22,12 @@ for experiment, rows in prj.sheet.df.groupby(['experiment']):
 
     for sample_name in rows["sample_name"]:
         print(experiment, sample_name)
-        r = pd.read_csv(os.path.join("results_pipeline", sample_name, "gRNA_assignment", "guide_cell_assignment.csv"))
-        s = pd.read_csv(os.path.join("results_pipeline", sample_name, "gRNA_assignment", "guide_cell_scores.csv"))
-        a = pd.read_csv(os.path.join("results_pipeline", sample_name, "gRNA_assignment", "guide_cell_assignment.csv"))
+        try:
+            r = pd.read_csv(os.path.join("results_pipeline", sample_name, "gRNA_assignment", "guide_cell_assignment.csv"))
+            s = pd.read_csv(os.path.join("results_pipeline", sample_name, "gRNA_assignment", "guide_cell_scores.csv"))
+            a = pd.read_csv(os.path.join("results_pipeline", sample_name, "gRNA_assignment", "guide_cell_assignment.csv"))
+        except IOError:
+            continue
         r['sample'] = s['sample'] = a['sample'] = sample_name
         r['experiment'] = s['experiment'] = a['experiment'] = experiment
         r['condition'] = s['condition'] = a['condition'] = rows.loc[rows["sample_name"] == sample_name, 'condition'].squeeze()
@@ -42,19 +46,30 @@ for experiment, rows in prj.sheet.df.groupby(['experiment']):
     assignment.to_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)), index=False)
 
 
+# Gather transcriptome across all samples used and annotate with gRNA info
 for n_genes in [500]:
     print("Merging...")
     print("n_genes", "experiment", "i", "sample.name", "sample.condition", "sample.replicate:")
     for experiment, rows in prj.sheet.df.groupby(['experiment']):
+        if experiment == "CROP-seq_HEK_test":
+            continue
+        reads = pd.read_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)))
+        scores = pd.read_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_scores.all.csv".format(experiment)))
+        assignment = pd.read_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)))
+
         # merge expression
         exp_all = pd.DataFrame()
-        for i, sample in enumerate([q for q in prj.samples if q.name in rows["sample_name"].tolist()]):
+        for i, sample in enumerate([q for q in prj.samples if q.name in rows["sample_name"].tolist() and hasattr(q, "replicate") and hasattr(q, "condition")]):
             print(n_genes, experiment, i, sample.name, sample.condition, sample.replicate)
             # read in
-            exp = pd.read_csv(os.path.join(sample.paths.sample_root, "digital_expression.{}genes.tsv".format(n_genes)), sep="\t").set_index("GENE")
+            try:
+                exp = pd.read_csv(os.path.join(sample.paths.sample_root, "digital_expression.{}genes.tsv".format(n_genes)), sep="\t").set_index("GENE")
+            except IOError:
+                continue
 
-            # get gRNA assignment
+            # get gRNA assignment filtered for concordance ratio
             ass = assignment.loc[
+                (assignment['concordance_ratio'] >= 0.9) &
                 (assignment['experiment'] == experiment) &
                 (assignment['condition'] == sample.condition) &
                 (assignment['replicate'].astype(str) == str(sample.replicate)),
@@ -77,7 +92,12 @@ for n_genes in [500]:
 
             print(sample.name, exp_all.shape)
         print("saving big")
+
+        # save only assigned cells
+        exp_all_assigned = exp_all[exp_all.columns[~pd.isnull(exp_all.columns.get_level_values('grna'))]]
+        exp_all_assigned.to_hdf(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
+
         # exp_all = exp_all.to_sparse(fill_value=0)
-        # exp_all.to_csv(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.csv.gz".format(experiment, n_genes)), index=True, header=None, compression="gzip")
+        exp_all.to_csv(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.csv.gz".format(experiment, n_genes)), index=True, header=None, compression="gzip")
         # exp_all.to_pickle(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.pickle".format(experiment, n_genes)))
-        exp_all.to_hdf(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.hdf5".format(experiment, n_genes)), "exp_matrix")
+        exp_all.to_hdf(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
