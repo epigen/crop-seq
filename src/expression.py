@@ -334,7 +334,6 @@ def stimulation_signature(assignment, df, experiment="CROP-seq_Jurkat_TCR", n_ge
 
         return matrix
 
-
     def best_signature_matrix(array, matrix):
         """
         :param np.array: 2D np.array
@@ -586,6 +585,8 @@ def stimulation_signature(assignment, df, experiment="CROP-seq_Jurkat_TCR", n_ge
         color="orange",
         alpha=0.5
     )
+    axis.set_xlabel(cond1)
+    axis.set_ylabel(cond2)
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.scatter.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
     fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.scatter.svg".format(experiment, n_genes)), bbox_inches="tight")
@@ -606,6 +607,8 @@ def stimulation_signature(assignment, df, experiment="CROP-seq_Jurkat_TCR", n_ge
         color="orange",
         alpha=0.5
     )
+    axis.set_xlabel("A")
+    axis.set_ylabel("M {} vs {}".format(cond1, cond2))
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.maplot.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
     fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.maplot.svg".format(experiment, n_genes)), bbox_inches="tight")
@@ -878,6 +881,9 @@ def stimulation_signature(assignment, df, experiment="CROP-seq_Jurkat_TCR", n_ge
     res_r.name = "residual"
 
     # reads per cell
+    sigs = pd.merge(sigs.reset_index(), res.reset_index()).set_index(['condition', 'replicate', 'cell', 'grna', 'gene'])
+
+    # reads per cell
     s = exp_assigned.sum(axis=0)
     s.name = "reads_per_cell"
     sigs = pd.merge(sigs.reset_index(), s.reset_index()).set_index(['condition', 'replicate', 'cell', 'grna', 'gene'])
@@ -961,14 +967,14 @@ def stimulation_signature(assignment, df, experiment="CROP-seq_Jurkat_TCR", n_ge
     fig, axis = plt.subplots(1, figsize=(10, 8))
     sns.stripplot(x=sigs_mean['signature'], y=sigs_mean.index, orient="horiz", ax=axis)
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.all_cells.{}.mean_group_signature.strip.svg".format(experiment, n_genes)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.all_cells.mean_group_signature.strip.svg".format(experiment, n_genes)), bbox_inches="tight")
 
     # Given the known condition of each group, what is the deviation from that?
     # plot as rank of mean
     fig, axis = plt.subplots(1, figsize=(10, 8))
     axis.scatter(sigs_mean['signature'].rank(ascending=False), sigs_mean['signature'])
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.all_cells.{}.mean_group_signature.rank.svg".format(experiment, n_genes)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.all_cells.mean_group_signature.rank.svg".format(experiment, n_genes)), bbox_inches="tight")
 
     # plot as violinplots (values per cell)
     p = sigs.reset_index().sort_values(['signature'])
@@ -1178,10 +1184,10 @@ def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500,
             degs = degs.rename(columns={gene + "_posterior": "gene_posterior"})
             scde_output = scde_output.append(degs.reset_index())
 
-            enr = enrichr(degs.reset_index().rename(columns={"index": "gene_name"}).head(N))
-            enr.to_csv(os.path.join(
-                results_dir,
-                "{}.digital_expression.{}genes.scde.diff_expr.{}.{}.enrichr.csv".format(experiment, n_genes, condition, gene)), index=False, encoding="utf8")
+            # enr = enrichr(degs.reset_index().rename(columns={"index": "gene_name"}).head(N))
+            # enr.to_csv(os.path.join(
+            #     results_dir,
+            #     "{}.digital_expression.{}genes.scde.diff_expr.{}.{}.enrichr.csv".format(experiment, n_genes, condition, gene)), index=False, encoding="utf8")
 
     # Calculate A and if sig
     scde_output["A"] = np.log2(scde_output["gene_posterior"] * scde_output["CTRL_posterior"]) / 2.
@@ -1194,7 +1200,11 @@ def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500,
 
     scde_output.to_csv(os.path.join(
         results_dir,
-        "{}.digital_expression.{}genes.scde.knockouts.all_conditions_genes.csv".format(experiment, n_genes)), index=False, encoding="utf8")
+        "{}.digital_expression.{}genes.scde.knockouts.all_conditions_genes.csv".format(experiment, n_genes)), index=True)
+
+    scde_output = pd.read_csv(os.path.join(
+        results_dir,
+        "{}.digital_expression.{}genes.scde.knockouts.all_conditions_genes.csv".format(experiment, n_genes)), index_col=0)
 
     # get top N differential genes
     scde_output["absZ"] = abs(scde_output["Z"])
@@ -1206,6 +1216,7 @@ def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500,
     # create pivot table of fold-changes
     scde_pivot = pd.pivot_table(scde_output.drop_duplicates().reset_index(), index="index", columns="id", values="Z").dropna()
     scde_pivot.to_csv(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.csv".format(experiment, n_genes, N)), index=True)
+    scde_pivot = pd.read_csv(os.path.join(results_dir, "{}.digital_expression.{}genes.scde.knockouts.top{}.csv".format(experiment, n_genes, N)), index_col=0)
 
     # Cluster on fold-changes
     g = sns.clustermap(
@@ -1246,6 +1257,38 @@ def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500,
 
     # Cluster groups on genes
     mean_matrix_norm = matrix_norm.T.groupby(level=['condition', 'gene']).mean().T
+
+    # gene vs gene matrix
+    self_genes = assignment['gene'].drop_duplicates().sort_values()
+    self_genes = self_genes[~self_genes.isin(["CTRL"])]
+
+    g = sns.clustermap(
+        mean_matrix_norm.ix[self_genes],
+        metric="correlation",
+        col_colors=get_level_colors(mean_matrix_norm.columns),
+        row_cluster=True, col_cluster=True,
+        yticklabels=True, xticklabels=True,
+        figsize=(15, 15))
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.self_genes.group_expression.clustering.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
+
+    for cond in conds:
+        p = mean_matrix_norm[mean_matrix_norm.columns[mean_matrix_norm.columns.get_level_values('condition') == cond]]
+        g = sns.clustermap(
+            p.ix[self_genes],
+            z_score=0,
+            col_colors=get_level_colors(p.columns),
+            row_cluster=False, col_cluster=False,
+            yticklabels=True, xticklabels=True,
+            figsize=(15, 15))
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+        g.fig.savefig(os.path.join(results_dir, "{}.digital_expression.{}genes.self_genes.group_expression.{}.heatmap.png".format(experiment, n_genes, condition)), bbox_inches="tight", dpi=300)
 
     # cluster mean gene expression
     g = sns.clustermap(
@@ -1580,6 +1623,126 @@ def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
     return results
 
 
+def flow_analysis():
+    """
+    """
+    from FlowCytometryTools import FCMeasurement
+    from FlowCytometryTools import ThresholdGate, PolyGate
+    from scipy.stats import pearsonr
+
+    flow = pd.read_csv(os.path.join("metadata", "flow_analysis.csv"))
+
+    # parse fcs files,
+    # gate on single, live cells
+    # extract cells passing crteria
+    fig0, axis0 = plt.subplots(8, 12, sharex=True, sharey=True, figsize=(12 * 2, 8 * 2))
+    fig1, axis1 = plt.subplots(8, 12, sharex=True, sharey=True, figsize=(12 * 2, 8 * 2))
+    fig2, axis2 = plt.subplots(8, 12, sharex=True, sharey=True, figsize=(12 * 2, 8 * 2))
+    fcs_cells = dict()
+    for i, fcs_file in enumerate(flow['fcs_file']):
+        if (flow.loc[flow['fcs_file'] == fcs_file, "failed"]).squeeze() is True:
+            continue
+        sample = FCMeasurement(ID=fcs_file, datafile=os.path.join("flow_data", fcs_file))
+
+        # extract measurements:
+        # 1st gating
+        gate1 = ThresholdGate(17500, 'FSC-A', region='above')
+        gate2 = ThresholdGate(100000, 'SSC-A', region='below')
+        gate3 = ThresholdGate(200000, 'FSC-A', region='below')
+        gate4 = ThresholdGate(7000, 'SSC-A', region='above')
+        _ = sample.plot(['FSC-A', 'SSC-A'], bins=200, ax=axis0.flat[i], gates=[gate1, gate2, gate3, gate4])
+
+        for gate in [gate1, gate2, gate3, gate4]:
+            sample = sample.gate(gate, apply_now=True)
+
+        # to plot after gating
+        # _ = sample.plot(['FSC-A', 'SSC-A'], bins=2000, gates=[gate1, gate2, gate3, gate4])
+
+        # 2nd gate
+        gate5 = PolyGate([
+            (1.782e+04, 1.896e+04), (1.060e+05, 1.022e+05),
+            (1.898e+05, 1.611e+05), (1.990e+05, 1.609e+05), (1.994e+05, 1.168e+05),
+            (1.060e+05, 5.667e+04), (4.525e+04, 2.380e+04), (1.801e+04, 1.129e+04),
+            (1.782e+04, 1.875e+04), (1.856e+04, 1.916e+04)], ('FSC-A', 'FSC-H'), region='in', name='FSC-A_FSC-H')
+        _ = sample.plot(['FSC-A', 'FSC-H'], bins=200, ax=axis1.flat[i], gates=[gate5])
+
+        sample = sample.gate(gate5, apply_now=True)
+
+        # to plot after gating
+        # _ = sample.plot(['FSC-A', 'FSC-H'], bins=2000, gates=[gate5])
+
+        # 3rd gate
+        gate6 = ThresholdGate(75, 'R/A APC-Cy7-A', region='below')
+        _ = sample.plot(['FSC-A', 'R/A APC-Cy7-A'], bins=200, ax=axis2.flat[i], gates=[gate6])
+        sample = sample.gate(gate6, apply_now=True)
+
+        # extract good cells
+        data = sample.data
+
+        fcs_cells[fcs_file] = data.drop("Time", axis=1)
+
+        axis0.flat[i].set_xlim((0, 250e3))
+        axis0.flat[i].set_xlim((0, 150000))
+        condition = (flow.loc[flow['fcs_file'] == fcs_file, "condition"]).squeeze()
+        grna = (flow.loc[flow['fcs_file'] == fcs_file, "grna"]).squeeze()
+        axis0.flat[i].set_title("{} - {}".format(condition, grna))
+        axis1.flat[i].set_title("{} - {}".format(condition, grna))
+        axis2.flat[i].set_title("{} - {}".format(condition, grna))
+
+    for axis in [axis0, axis1, axis2]:
+        for a in axis.flat:
+            a.set_xlabel(None, visible=False)
+            a.set_ylabel(None, visible=False)
+            a.set_xticklabels(a.get_xticklabels(), visible=False)
+            a.set_yticklabels(a.get_yticklabels(), visible=False)
+    for f in [fig0, fig1, fig2]:
+        sns.despine(f)
+    fig0.savefig(os.path.join("results", "flow", "flow.all_samples.FSCA_SSCA.png"), bbox_inches="tight", dpi=300)
+    fig1.savefig(os.path.join("results", "flow", "flow.all_samples.FSCA_FSCH.png"), bbox_inches="tight", dpi=300)
+    fig2.savefig(os.path.join("results", "flow", "flow.all_samples.FSCA_LD.png"), bbox_inches="tight", dpi=300)
+
+    #
+
+    # Plot pregated mean of positive cells vs marker gene expression per gRNA
+    marker_gene_mapping = {
+        "CD38": "CD38", "CD69": "CD69", "PD1": "PDCD1", "pRelA": "RELA", "CD154": "CD40LG", "CD25": "IL2RA"
+    }
+
+    matrix_norm_t = matrix_norm.T
+    fig, axis = plt.subplots(
+        len(flow['condition'].drop_duplicates()), len(marker_gene_mapping.keys()), sharex=False, sharey=False,
+        figsize=(
+            len(marker_gene_mapping.keys()) * 4,
+            len(flow['condition'].drop_duplicates()) * 4))
+
+    gene_colors = dict(zip(flow['gene'].drop_duplicates(), sns.color_palette("colorblind") * 10))
+    cm = plt.get_cmap('gist_rainbow')
+    gene_colors = dict(zip(flow['gene'].drop_duplicates(), [cm(1. * i / len(flow['gene'].drop_duplicates())) for i in range(len(flow['gene'].drop_duplicates()))]))
+    for i, condition in enumerate(flow['condition'].drop_duplicates()):
+        for j, marker in enumerate(marker_gene_mapping.keys()):
+            facs_means = dict()
+            scRNA_means = dict()
+            for grna in flow[flow['condition'] == condition]['grna'].drop_duplicates():
+                gene = (flow.loc[(flow['condition'] == condition) & (flow['grna'] == grna), "gene"]).squeeze()
+                facs_mean = flow[(flow['condition'] == condition) & (flow['grna'] == grna)]["%{}+".format(marker)].squeeze()
+                scRNA_mean = matrix_norm_t.ix[
+                    matrix_norm_t.index[
+                        (matrix_norm_t.index.get_level_values("condition") == condition) &
+                        (matrix_norm_t.index.get_level_values("grna") == ("Tcrlibrary_" + grna if not grna.startswith("CTRL") else grna))
+                    ]][marker_gene_mapping[marker]].mean()
+
+                axis[i][j].scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=gene_colors[gene])
+                axis[i][j].set_title("{} {}".format(condition, marker))
+
+                facs_means[grna] = facs_mean
+                scRNA_means[grna] = scRNA_mean
+
+            c, p = pearsonr(scRNA_means.values(), facs_means.values())
+            axis[i][j].text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
+    sns.despine(fig)
+    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.png"), bbox_inches="tight", dpi=300)
+
+
 prj = Project(os.path.join("metadata", "config.yaml"))
 prj.add_sample_sheet()
 prj.paths.results_dir = results_dir = os.path.join("results")
@@ -1591,7 +1754,7 @@ guide_annotation = os.path.join("metadata", "guide_annotation.csv")
 guide_annotation = pd.read_csv(guide_annotation)
 
 n_genes = 500
-experiment, rows = prj.sheet.df.groupby(['experiment']).groups.items()[1]
+experiment, rows = prj.sheet.df.groupby(['experiment']).groups.items()[2]
 
 
 # get expression
@@ -1603,10 +1766,14 @@ for n_genes in [500]:
 
         # exp = pd.read_hdf(os.path.join(results_dir, "{}.digital_expression.{}genes.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
         exp_assigned = pd.read_hdf(os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
-        # exp_assigned = exp_assigned.T.reset_index()
-        # exp_assigned['replicate'] = exp_assigned['replicate'].astype(str)
-        # exp_assigned = exp_assigned.set_index(['condition', 'replicate', 'cell', 'grna', 'gene'])
-        # exp_assigned = exp_assigned.T
+        exp_assigned = exp_assigned.T.reset_index()
+        exp_assigned['replicate'] = exp_assigned['replicate'].astype(np.int64).astype(str)
+        exp_assigned['gene'] = pd.np.nan
+        exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, "grna"].str.split("_")).apply(lambda x: x[1])
+        exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, "grna"].str.split("_")).apply(lambda x: x[2])
+        exp_assigned.loc[exp_assigned['grna'].str.contains("CTRL"), 'gene'] = "CTRL"
+        exp_assigned = exp_assigned.set_index(['condition', 'replicate', 'cell', 'grna', 'gene'])
+        exp_assigned = exp_assigned.T
 
         # exp_assigned.columns = exp_assigned.columns.set_levels([exp_assigned.columns.levels[:-1], exp_assigned.columns.levels[-1].astype(str)])
 
@@ -1645,6 +1812,9 @@ for n_genes in [500]:
         # visualize signature and make signature position assignments per cell/gRNA/gene
         stimulation_signature(assignment, matrix_norm)
 
+        # Compare with FACS measurements
+        flow_analysis()
+
         # Part 2.
         # Explore the knockouts!
 
@@ -1658,7 +1828,7 @@ for n_genes in [500]:
         # b1) with MannU test
         # explore_knockouts(matrix_norm.to_dense(), assignment, prefix=prefix)
         # b2) with scde
-        # gather_scde()
+        gather_scde()
         # explore_knockouts_scde()
 
         # Plot the difference between stimulated/unstimulated for same genes
