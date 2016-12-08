@@ -1707,8 +1707,8 @@ def flow_analysis():
     marker_gene_mapping = {
         "CD38": "CD38", "CD69": "CD69", "PD1": "PDCD1", "pRelA": "RELA", "CD154": "CD40LG", "CD25": "IL2RA"
     }
-
     matrix_norm_t = matrix_norm.T
+
     fig, axis = plt.subplots(
         len(flow['condition'].drop_duplicates()), len(marker_gene_mapping.keys()), sharex=False, sharey=False,
         figsize=(
@@ -1740,7 +1740,77 @@ def flow_analysis():
             c, p = pearsonr(scRNA_means.values(), facs_means.values())
             axis[i][j].text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
     sns.despine(fig)
-    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.png"), bbox_inches="tight", dpi=300)
+    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.grna.png"), bbox_inches="tight", dpi=300)
+
+    # Only CD69
+    fig, axis = plt.subplots(
+        len(flow['condition'].drop_duplicates()), 1, sharex=False, sharey=False,
+        figsize=(
+            1 * 4,
+            len(flow['condition'].drop_duplicates()) * 4))
+
+    gene_colors = dict(zip(flow['gene'].drop_duplicates(), sns.color_palette("colorblind") * 10))
+    cm = plt.get_cmap('gist_rainbow')
+    gene_colors = dict(zip(flow['gene'].drop_duplicates(), [cm(1. * i / len(flow['gene'].drop_duplicates())) for i in range(len(flow['gene'].drop_duplicates()))]))
+    for i, condition in enumerate(flow['condition'].drop_duplicates()):
+        for j, marker in enumerate(marker_gene_mapping.keys()):
+            if marker != "CD69":
+                continue
+            facs_means = dict()
+            scRNA_means = dict()
+            for grna in flow[flow['condition'] == condition]['grna'].drop_duplicates():
+                gene = (flow.loc[(flow['condition'] == condition) & (flow['grna'] == grna), "gene"]).squeeze()
+                facs_mean = flow[(flow['condition'] == condition) & (flow['grna'] == grna)]["%{}+".format(marker)].squeeze()
+                scRNA_mean = matrix_norm_t.ix[
+                    matrix_norm_t.index[
+                        (matrix_norm_t.index.get_level_values("condition") == condition) &
+                        (matrix_norm_t.index.get_level_values("grna") == ("Tcrlibrary_" + grna if not grna.startswith("CTRL") else grna))
+                    ]][marker_gene_mapping[marker]].mean()
+
+                axis[i].scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=gene_colors[gene])
+                axis[i].text(scRNA_mean, facs_mean, grna)
+                axis[i].set_title("{} {}".format(condition, marker))
+
+                facs_means[grna] = facs_mean
+                scRNA_means[grna] = scRNA_mean
+
+            c, p = pearsonr(scRNA_means.values(), facs_means.values())
+            axis[i].text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
+    sns.despine(fig)
+    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.grna.CD69_only.png"), bbox_inches="tight", dpi=300)
+
+    # Plot pregated mean of positive cells vs marker gene expression per gene
+    fig, axis = plt.subplots(
+        len(flow['condition'].drop_duplicates()), len(marker_gene_mapping.keys()), sharex=False, sharey=False,
+        figsize=(
+            len(marker_gene_mapping.keys()) * 4,
+            len(flow['condition'].drop_duplicates()) * 4))
+
+    gene_colors = dict(zip(flow['gene'].drop_duplicates(), sns.color_palette("colorblind") * 10))
+    cm = plt.get_cmap('gist_rainbow')
+    gene_colors = dict(zip(flow['gene'].drop_duplicates(), [cm(1. * i / len(flow['gene'].drop_duplicates())) for i in range(len(flow['gene'].drop_duplicates()))]))
+    for i, condition in enumerate(flow['condition'].drop_duplicates()):
+        for j, marker in enumerate(marker_gene_mapping.keys()):
+            facs_means = dict()
+            scRNA_means = dict()
+            for gene in flow[flow['condition'] == condition]['gene'].drop_duplicates():
+                facs_mean = flow[(flow['condition'] == condition) & (flow['gene'] == gene)]["%{}+".format(marker)].squeeze().mean()
+                scRNA_mean = matrix_norm_t.ix[
+                    matrix_norm_t.index[
+                        (matrix_norm_t.index.get_level_values("condition") == condition) &
+                        (matrix_norm_t.index.get_level_values("gene") == gene)
+                    ]][marker_gene_mapping[marker]].mean()
+
+                axis[i][j].scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=gene_colors[gene])
+                axis[i][j].set_title("{} {}".format(condition, marker))
+
+                facs_means[gene] = facs_mean
+                scRNA_means[gene] = scRNA_mean
+
+            c, p = pearsonr(scRNA_means.values(), facs_means.values())
+            axis[i][j].text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
+    sns.despine(fig)
+    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.gene.png"), bbox_inches="tight", dpi=300)
 
 
 prj = Project(os.path.join("metadata", "config.yaml"))
@@ -1813,6 +1883,7 @@ for n_genes in [500]:
         stimulation_signature(assignment, matrix_norm)
 
         # Compare with FACS measurements
+        compare_bulk()
         flow_analysis()
 
         # Part 2.
