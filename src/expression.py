@@ -1623,6 +1623,167 @@ def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
     return results
 
 
+def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
+    """
+    Compare Bulk RNA-seq data with single-cell
+    """
+    from scipy.stats import pearsonr, spearmanr
+    from sklearn.metrics import mean_squared_error
+    from math import sqrt
+
+    def rmse(x, y):
+        return sqrt(mean_squared_error(x, y)), pd.np.nan
+
+    def n_cells(x):
+        return x.shape[1], pd.np.nan
+
+    experiment = "CROP-seq_Jurkat_TCR"
+
+    # get single-cell expression matrix and match grna names
+    matrix_norm.columns = matrix_norm.columns.set_levels([matrix_norm.columns.levels[3].str.replace(".*library_", "")], level=[3])
+
+    # read gene expression matrix
+    bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
+    esat = pd.read_csv(os.path.join("results", "{}.ESAT_count_matrix.csv".format(experiment)), index_col=[0], header=range(4)).fillna(0)
+
+    # read in diff genes
+    degs = pd.read_csv(
+        os.path.join(results_dir, "{}.digital_expression.{}genes.scde.diff_expr.csv".format(experiment, n_genes)), index_col=0
+    )
+    degs = degs[~degs.index.str.contains("library|CTRL")]
+    de_genes = degs[abs(degs["cZ"]) > 2].index.tolist()
+
+    # 1). Compare expression levels across all genes
+    # 2). Compare expression levels in signature genes
+    # 2b). Compare expression in selected markers
+    # 3). Compare signature (recall)
+    # 4). Compare differential genes in KO vs CTRL
+    # x). Each single-cell vs Bulk
+
+    # 1). & 2).
+    for quant_type, count_matrix in [("bitseq", bitseq), ("esat", esat)]:
+        count_matrix = count_matrix.ix[matrix_norm.index].dropna()
+        matrix_norm = matrix_norm.ix[count_matrix.index].dropna()
+        bulk_log_tpm = np.log2(1 + count_matrix.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
+        de_genes = [x for x in de_genes if x in bulk_log_tpm.index]
+
+        comparisons = pd.DataFrame()
+        for gene_group, gene_filter in [("all_genes", bulk_log_tpm.index), ("de_genes", de_genes)]:
+            # At gene level or at grna level
+            for level in ["gene", "grna"]:
+                # fig, axis = plt.subplots(
+                #     len(matrix_norm.columns.get_level_values('condition').drop_duplicates()),
+                #     len(matrix_norm.columns.get_level_values(level).drop_duplicates()),
+                #     figsize=(
+                #         4 * len(matrix_norm.columns.get_level_values(level).drop_duplicates()),
+                #         4 * len(matrix_norm.columns.get_level_values('condition').drop_duplicates())
+                #     ), sharex=True, sharey=True
+                # )
+                for i, condition in enumerate(matrix_norm.columns.get_level_values('condition').drop_duplicates()):
+                    # Compare within each knockout
+                    for j, ko in enumerate(matrix_norm.columns.get_level_values(level).drop_duplicates()):
+                        print(quant_type, gene_group, level, condition, ko)
+                        s = matrix_norm.columns[(matrix_norm.columns.get_level_values("condition") == condition) & (matrix_norm.columns.get_level_values(level) == ko)]
+                        b = bulk_log_tpm.columns[(bulk_log_tpm.columns.get_level_values("condition") == condition) & (bulk_log_tpm.columns.get_level_values(level) == ko)]
+
+                        if b.shape[0] == 0 or s.shape[0] == 0:
+                            continue
+
+                        single_cell = matrix_norm[s]
+                        sm = single_cell.mean(axis=1).ix[gene_filter]
+                        bulk = bulk_log_tpm[b]
+                        bm = bulk.mean(axis=1).ix[gene_filter]
+
+                        # Mean of cells vs Bulk
+                        res = list()
+                        for metric in [pearsonr, spearmanr, rmse, n_cells]:
+                            if metric != n_cells:
+                                r = metric(sm, bm)
+                            else:
+                                r = metric(single_cell)
+                            res.append(r)
+
+                            comparisons = comparisons.append(pd.Series(
+                                [gene_group, condition, level, ko, metric.__name__] + list(r),
+                                index=["gene_group", "condition", "level", "KO", "metric", "value", "p_value"]), ignore_index=True)
+
+                        # axis[i][j].scatter(bm, sm, alpha=0.75, s=4)
+
+                        # axis[i][j].set_title("{} {}".format(condition, ko))
+                        # axis[i][j].text(bm.max(), sm.max(), "Pearson: {}\n Spearman: {}\nRMSE: {}".format(*[x[0] for x in res]))
+                        # axis[i][j].set_xlabel("Bulk 3' RNA-seq")
+                        # axis[i][j].set_ylabel("Mean of single-cells")
+                # sns.despine(fig)
+                # fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.scatter.{}.png".format(level)), dpi=300, bbox_inches="tight")
+
+                comparisons.to_csv(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.metrics.csv".format(quant_type)))
+
+                comparisons2 = comparisons.copy()
+                comparisons2.loc[comparisons2['metric'] == "n_cells", "value"] = np.log10(comparisons2.loc[comparisons2['metric'] == "n_cells", "value"])
+
+                # heatmap with metrics
+                fig, axis = plt.subplots(
+                    len(comparisons2["metric"].drop_duplicates()),
+                    len(matrix_norm.columns.get_level_values('condition').drop_duplicates()),
+                )
+                for i, condition in enumerate(matrix_norm.columns.get_level_values('condition').drop_duplicates()):
+                    for j, metric in enumerate(comparisons2["metric"].drop_duplicates()):
+                        pivot = pd.pivot_table(comparisons2[
+                            (comparisons2["gene_group"] == gene_group) &
+                            (comparisons2["level"] == level) &
+                            (comparisons2["condition"] == condition) &
+                            (comparisons2["metric"] == metric)], values="value", index="metric", columns="KO")
+                        sns.heatmap(pivot, ax=axis[j][i])
+
+                        if j != 3:
+                            axis[j][i].set_xticklabels(axis[j][i].get_xticklabels(), visible=False)
+                            axis[j][i].set_xlabel(None, visible=False)
+                        else:
+                            axis[j][i].set_xticklabels(axis[j][i].get_xticklabels(), rotation=90)
+                fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.{}.metric_heatmap.{}.png".format(quant_type, gene_group, level)), dpi=300, bbox_inches="tight")
+
+                # scatter of n_cells vs metrics
+                pivot = pd.pivot_table(comparisons2[
+                    (comparisons2["gene_group"] == gene_group) &
+                    (comparisons2["level"] == level)], values="value", index=["condition", "KO"], columns="metric")
+                g = sns.pairplot(data=pivot.reset_index().set_index("KO"), hue="condition")
+                g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.{}.metric_scatter.{}.png".format(quant_type, gene_group, level)), dpi=300, bbox_inches="tight")
+
+                # 2b).
+                # CD69, CD82, etc...
+                markers = ["CD69", "CD82", "PDCD1", "CD38", "BCL7A", "CDC20", "TUBB", "ADA", "TUBA1B"]
+
+                sm = matrix_norm.T.groupby(level=['condition', level]).mean()[markers]
+                sm["data_type"] = "single_cell"
+                bm = bulk_log_tpm.T.groupby(level=['condition', level]).mean()[markers]
+                bm = bm.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
+                bm["data_type"] = "bulk"
+                e = pd.melt(sm.reset_index(), id_vars=['condition', level, 'data_type']).append(pd.melt(bm.reset_index(), id_vars=['condition', level, 'data_type']))
+
+                g = sns.FacetGrid(data=e, col="variable", row="data_type", hue="condition", sharey=True, sharex=True)
+                g.map(sns.stripplot, level, "value")
+                g.add_legend()
+                for ax in g.axes.flat:
+                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+                g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.marker_genes.stripplot.{}.png".format(quant_type, level)), dpi=300, bbox_inches="tight")
+
+                g = sns.FacetGrid(data=e, col="variable", row="condition", hue="data_type", sharey=True, sharex=True)
+                g.map(sns.stripplot, level, "value")
+                g.add_legend()
+                for ax in g.axes.flat:
+                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+                g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.marker_genes.stripplot.techniq_together.{}.png".format(quant_type, level)), dpi=300, bbox_inches="tight")
+        comparisons.to_csv(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.metrics.csv".format(quant_type)))
+
+        # 3).
+        # Correlate Bulk samples
+
+        # Signature genes
+        # Heatmap
+
+        # Correlation
+
+
 def flow_analysis():
     """
     """
@@ -1883,7 +2044,7 @@ for n_genes in [500]:
         stimulation_signature(assignment, matrix_norm)
 
         # Compare with FACS measurements
-        compare_bulk()
+        compare_bulk(matrix_norm)
         flow_analysis()
 
         # Part 2.
