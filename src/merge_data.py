@@ -5,6 +5,68 @@ import os
 import pandas as pd
 
 
+def collect_bitseq_output(samples):
+    first = True
+    for i, sample in enumerate(samples):
+        if first:
+            try:
+                # read the "tr" file of one sample to get indexes
+                tr = pd.read_csv(
+                    os.path.join(
+                        sample.paths.sample_root, "bowtie1_{}".format(sample.transcriptome),
+                        "bitSeq",
+                        sample.name + ".tr"),
+                    sep=" ", header=None, skiprows=1,
+                    names=["ensembl_gene_id", "ensembl_transcript_id", "v1", "v2"])
+            except IOError:
+                print("Sample {} is missing.".format(sample.name))
+                continue
+            # add id index
+            tr.set_index("ensembl_gene_id", append=False, inplace=True)
+            tr.set_index("ensembl_transcript_id", append=True, inplace=True)
+            # create dataframe
+            expr = pd.DataFrame(index=tr.index)
+            first = False
+
+        # load counts
+        try:
+            counts = pd.read_csv(os.path.join(
+                sample.paths.sample_root, "bowtie1_{}".format(sample.transcriptome),
+                "bitSeq",
+                sample.name + ".counts"), sep=" ")
+        except IOError:
+            print("Sample {} is missing.".format(sample.name))
+            continue
+        counts.index = expr.index
+
+        # Append
+        expr[sample.name] = counts
+
+    return expr
+
+
+def collect_ESAT_output(samples):
+    first = True
+    for i, sample in enumerate(samples):
+        try:
+            counts = pd.read_csv(
+                os.path.join(
+                    sample.paths.sample_root, "ESAT_{}".format(sample.genome), sample.name + ".gene.txt"),
+                sep="\t", header=None, skiprows=1,
+                names=["gene_name", "chr", "strand", sample.name]).set_index("gene_name")[sample.name]
+        except IOError:
+            print("Sample {} is missing.".format(sample.name))
+            continue
+        # add gene index
+        if first:
+            expr = pd.DataFrame(counts)
+            first = False
+        else:
+            expr[sample.name] = counts
+
+    return expr
+
+
 prj = Project(os.path.join("metadata", "config.yaml"))
 prj.add_sample_sheet()
 prj.paths.results_dir = os.path.join("results")
@@ -101,3 +163,59 @@ for n_genes in [500]:
         exp_all.to_csv(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.csv.gz".format(experiment, n_genes)), index=True, header=None, compression="gzip")
         # exp_all.to_pickle(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.pickle".format(experiment, n_genes)))
         exp_all.to_hdf(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
+
+
+# Collect bulk RNA-seq data
+for experiment in prj.sheet.df['experiment'].drop_duplicates().dropna():
+    samples = [sample for sample in prj.samples if hasattr(sample, "experiment")]
+    samples = [sample for sample in samples if sample.experiment == experiment and sample.library == "SMART-seq"]
+    # Collect transcript counts for Bulk samples
+    count_matrix = collect_bitseq_output(samples)
+
+    # Add metadata
+    compl_samples = [[sample for sample in samples if sample.name == c][0] for c in count_matrix.columns]
+    condition = [sample.condition for sample in compl_samples]
+    gene = [sample.gene for sample in compl_samples]
+    grna = [sample.grna for sample in compl_samples]
+    count_matrix.columns = pd.MultiIndex.from_arrays([[sample.name for sample in compl_samples], condition, gene, grna], names=["sample_name", "condition", "gene", "grna"])
+
+    # Map ensembl gene IDs to gene names
+    import requests
+    url_query = "".join([
+        """http://ensembl.org/biomart/martservice?query=""",
+        """<?xml version="1.0" encoding="UTF-8"?>""",
+        """<!DOCTYPE Query>""",
+        """<Query  virtualSchemaName = "default" formatter = "CSV" header = "0" uniqueRows = "0" count = "" datasetConfigVersion = "0.6" >""",
+        """<Dataset name = "hsapiens_gene_ensembl" interface = "default" >""",
+        """<Attribute name = "ensembl_gene_id" />""",
+        """<Attribute name = "external_gene_name" />""",
+        """</Dataset>""",
+        """</Query>"""])
+    req = requests.get(url_query, stream=True)
+    mapping = pd.DataFrame((x.strip().split(",") for x in list(req.iter_lines())), columns=["ensembl_gene_id", "gene_name"]).set_index("ensembl_gene_id").to_dict()['gene_name']
+    index = count_matrix.index.get_level_values('ensembl_gene_id').str.replace("\..*", "")
+    genes = [mapping[g] for g in index[index.isin(mapping.keys())]]
+
+    count_matrix = count_matrix[index.isin(mapping.keys())]
+    count_matrix.index = pd.MultiIndex.from_arrays([genes, count_matrix.index.get_level_values('ensembl_gene_id')], names=['gene_name', "ensembl_transcript_id"])
+
+    # Reduce to gene-level measurements by max of transcripts
+    count_matrix_gene = count_matrix.groupby(level=["gene_name"]).max()
+
+    # save
+    count_matrix.to_csv(os.path.join("results", "{}.count_matrix.transcript_level.csv".format(experiment)))
+    count_matrix_gene.to_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)))
+
+    # Get ESAT count matrix
+    samples = [sample for sample in prj.samples if hasattr(sample, "experiment")]
+    samples = [sample for sample in samples if sample.experiment == experiment and sample.library == "rnaESAT"]
+    count_matrix = collect_ESAT_output(samples).sort_index()
+
+    compl_samples = [[sample for sample in samples if sample.name == c][0] for c in count_matrix.columns]
+    condition = [sample.condition for sample in compl_samples]
+    gene = [sample.gene for sample in compl_samples]
+    grna = [sample.grna for sample in compl_samples]
+    count_matrix.columns = pd.MultiIndex.from_arrays([[sample.name for sample in compl_samples], condition, gene, grna], names=["sample_name", "condition", "gene", "grna"])
+
+    # save
+    count_matrix.to_csv(os.path.join("results", "{}.ESAT_count_matrix.csv".format(experiment)))
