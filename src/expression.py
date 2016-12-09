@@ -1631,6 +1631,98 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
     from sklearn.metrics import mean_squared_error
     from math import sqrt
 
+    def normalize_quantiles_r(dataframe):
+        import rpy2.robjects as robjects
+        import rpy2.robjects.numpy2ri
+        rpy2.robjects.numpy2ri.activate()
+
+        robjects.r('require("preprocessCore")')
+        normq = robjects.r('normalize.quantiles')
+
+        dataframe_norm = pd.DataFrame(
+            np.array(normq(dataframe)),
+            index=dataframe.index,
+            columns=dataframe.columns
+        )
+
+        return dataframe_norm
+
+    def seurat_regress(matrix_file, output_prefix):
+        """
+        """
+        import rpy2.robjects as robj
+        import pandas.rpy.common as com
+
+        run = robj.r("""
+            # module unload R
+            # module load gcc/6.0.0
+            # module load texlive
+            # module load R/3.2.3
+            # srun -J seuratBulk --mem 256000 -p develop -n 1 -c 8 --pty /cm/shared/apps/R/3.2.3/bin/R
+
+            # matrix_file = "/home/arendeiro/projects/crop-seq/results/CROP-seq_Jurkat_TCR.count_matrix.gene_level.csv"
+            # output_prefix = "/home/arendeiro/projects/crop-seq/results/CROP-seq_Jurkat_TCR.count_matrix.gene_level"
+
+            # matrix_file = "/home/arendeiro/projects/crop-seq/results/CROP-seq_Jurkat_TCR.ESAT_count_matrix.csv"
+            # output_prefix = "/home/arendeiro/projects/crop-seq/results/CROP-seq_Jurkat_TCR.ESAT_count_matrix"
+
+            function(matrix_file, output_prefix){
+                library(Seurat)
+                library(dplyr)
+                library(Matrix)
+
+                counts <- read.csv(matrix_file, sep=",")
+
+                # create experiment matrix
+                colData = as.data.frame(t(counts[c(1, 2, 3), ]))
+                colData$sample_name = rownames(colData)
+                colnames(colData) = c("condition", "gene", "grna", "sample_name")
+                colData = colData[-c(1), ]
+
+                rownames(counts) = counts[, 1]
+                countData = counts[-c(0, 1, 2, 3, 4), -c(1)]
+                countData <- apply(countData, 2, function(x) {storage.mode(x) <- 'integer'; x})
+                countData <- apply(countData, 2, function(x) {x[is.na(x)] <- 0; x})
+
+                # Initialize the Seurat object with the raw data
+                exp <- new("seurat", raw.data = countData)
+
+                # Keep all genes expressed in at least 20 cells, keep all cells with >= 500 genes
+                exp <- Setup(
+                    exp, project="cropseq",
+                    min.cells=5, min.genes=500,
+                    do.logNormalize=T, total.expr=1e4)
+
+                # Stash cell attributes
+                exp <- AddMetaData(exp, colData$sample_name, "sample_name")
+                exp <- AddMetaData(exp, colData$condition, "condition")
+                exp <- AddMetaData(exp, colData$gene, "gene")
+                exp <- AddMetaData(exp, colData$grna, "grna")
+
+                # Calculate the percentage of mitochondrial genes and store it.
+                mito.genes <- grep("^MT-", rownames(exp@data), value=T)
+                percent.mito <- colSums(expm1(exp@data[mito.genes, ])) / colSums(expm1(exp@data))
+                exp <- AddMetaData(exp, percent.mito, "percent.mito")
+                # Calculate the percentage of ribosomal genes and store it.
+                ribo.genes <- grep("^RP", rownames(exp@data), value=T)
+                percent.ribo <- colSums(expm1(exp@data[ribo.genes, ])) / colSums(expm1(exp@data))
+                exp <- AddMetaData(exp, percent.ribo, "percent.ribo")
+
+                # Regress out
+                exp_subset_regressed <- RegressOut(exp, latent.vars=c("nUMI", "percent.mito"))
+
+                # Write as csv
+                output = paste(output_prefix, "seurat_regressed.csv", sep=".")
+                write.csv(exp_subset_regressed@scale.data, output, sep=",", quote=FALSE)
+                return(as.matrix(exp_subset_regressed@data))
+            }
+        """)
+        # convert to Python objects
+        norm_matrix = com.convert_robj(
+            run(matrix_file, output_prefix))
+
+        return norm_matrix
+
     def rmse(x, y):
         return sqrt(mean_squared_error(x, y)), pd.np.nan
 
@@ -1642,9 +1734,35 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
     # get single-cell expression matrix and match grna names
     matrix_norm.columns = matrix_norm.columns.set_levels([matrix_norm.columns.levels[3].str.replace(".*library_", "")], level=[3])
 
+    # # Try using counts
+    # exp_assigned = pd.read_hdf(os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
+    # exp_assigned = exp_assigned.T.reset_index()
+    # exp_assigned['replicate'] = exp_assigned['replicate'].astype(np.int64).astype(str)
+    # exp_assigned['gene'] = pd.np.nan
+    # exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, "grna"].str.split("_")).apply(lambda x: x[1])
+    # exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, "grna"].str.split("_")).apply(lambda x: x[2])
+    # exp_assigned.loc[exp_assigned['grna'].str.contains("CTRL"), 'gene'] = "CTRL"
+    # exp_assigned = exp_assigned.set_index(['condition', 'replicate', 'cell', 'grna', 'gene'])
+    # exp_assigned = exp_assigned.T
+
+    # tpm = exp_assigned.apply(lambda x: x / float(x.sum()), axis=0) * 1e4
+
     # read gene expression matrix
     bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
     esat = pd.read_csv(os.path.join("results", "{}.ESAT_count_matrix.csv".format(experiment)), index_col=[0], header=range(4)).fillna(0)
+
+    bitseq_quant = normalize_quantiles_r(bitseq)
+    esat_quant = normalize_quantiles_r(esat)
+
+    bitseq = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
+    esat = np.log2(1 + esat.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
+
+    # bitseq_seurat = seurat_regress(bitseq)
+    # esat_seurat = seurat_regress(esat)
+    bitseq_seurat = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.seurat_regressed.csv".format(experiment)), index_col=[0])
+    bitseq_seurat.columns = bitseq.columns
+    esat_seurat = pd.read_csv(os.path.join("results", "{}.ESAT_count_matrix.seurat_regressed.csv".format(experiment)), index_col=[0])
+    esat_seurat.columns = esat.columns
 
     # read in diff genes
     degs = pd.read_csv(
@@ -1653,22 +1771,26 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
     degs = degs[~degs.index.str.contains("library|CTRL")]
     de_genes = degs[abs(degs["cZ"]) > 2].index.tolist()
 
+    # Tasks:
+
     # 1). Compare expression levels across all genes
     # 2). Compare expression levels in signature genes
     # 2b). Compare expression in selected markers
-    # 3). Compare signature (recall)
-    # 4). Compare differential genes in KO vs CTRL
+    # 3). Compare signature (recall, agreement)
+    # 4). Compare differential genes in KO vs CTRL (recall, agreement)
     # x). Each single-cell vs Bulk
+    quant_types = [
+        ("bitseq", bitseq), ("esat", esat), ("bitseq_quant", bitseq_quant),
+        ("esat_quant", esat_quant), ("bitseq_seurat", bitseq_seurat), ("esat_seurat", esat_seurat)]
 
     # 1). & 2).
-    for quant_type, count_matrix in [("bitseq", bitseq), ("esat", esat)]:
-        count_matrix = count_matrix.ix[matrix_norm.index].dropna()
-        matrix_norm = matrix_norm.ix[count_matrix.index].dropna()
-        bulk_log_tpm = np.log2(1 + count_matrix.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
-        de_genes = [x for x in de_genes if x in bulk_log_tpm.index]
+    for quant_type, exp_matrix in quant_types:
+        exp_matrix = exp_matrix.ix[matrix_norm.index].dropna()
+        matrix_norm = matrix_norm.ix[exp_matrix.index].dropna()
+        de_genes = [x for x in de_genes if x in exp_matrix.index]
 
         comparisons = pd.DataFrame()
-        for gene_group, gene_filter in [("all_genes", bulk_log_tpm.index), ("de_genes", de_genes)]:
+        for gene_group, gene_filter in [("all_genes", exp_matrix.index), ("de_genes", de_genes)]:
             # At gene level or at grna level
             for level in ["gene", "grna"]:
                 # fig, axis = plt.subplots(
@@ -1684,14 +1806,14 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
                     for j, ko in enumerate(matrix_norm.columns.get_level_values(level).drop_duplicates()):
                         print(quant_type, gene_group, level, condition, ko)
                         s = matrix_norm.columns[(matrix_norm.columns.get_level_values("condition") == condition) & (matrix_norm.columns.get_level_values(level) == ko)]
-                        b = bulk_log_tpm.columns[(bulk_log_tpm.columns.get_level_values("condition") == condition) & (bulk_log_tpm.columns.get_level_values(level) == ko)]
+                        b = exp_matrix.columns[(exp_matrix.columns.get_level_values("condition") == condition) & (exp_matrix.columns.get_level_values(level) == ko)]
 
                         if b.shape[0] == 0 or s.shape[0] == 0:
                             continue
 
                         single_cell = matrix_norm[s]
                         sm = single_cell.mean(axis=1).ix[gene_filter]
-                        bulk = bulk_log_tpm[b]
+                        bulk = exp_matrix[b]
                         bm = bulk.mean(axis=1).ix[gene_filter]
 
                         # Mean of cells vs Bulk
@@ -1749,39 +1871,66 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
                 g = sns.pairplot(data=pivot.reset_index().set_index("KO"), hue="condition")
                 g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.{}.metric_scatter.{}.png".format(quant_type, gene_group, level)), dpi=300, bbox_inches="tight")
 
-                # 2b).
-                # CD69, CD82, etc...
-                markers = ["CD69", "CD82", "PDCD1", "CD38", "BCL7A", "CDC20", "TUBB", "ADA", "TUBA1B"]
-
-                sm = matrix_norm.T.groupby(level=['condition', level]).mean()[markers]
-                sm["data_type"] = "single_cell"
-                bm = bulk_log_tpm.T.groupby(level=['condition', level]).mean()[markers]
-                bm = bm.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
-                bm["data_type"] = "bulk"
-                e = pd.melt(sm.reset_index(), id_vars=['condition', level, 'data_type']).append(pd.melt(bm.reset_index(), id_vars=['condition', level, 'data_type']))
-
-                g = sns.FacetGrid(data=e, col="variable", row="data_type", hue="condition", sharey=True, sharex=True)
-                g.map(sns.stripplot, level, "value")
-                g.add_legend()
-                for ax in g.axes.flat:
-                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
-                g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.marker_genes.stripplot.{}.png".format(quant_type, level)), dpi=300, bbox_inches="tight")
-
-                g = sns.FacetGrid(data=e, col="variable", row="condition", hue="data_type", sharey=True, sharex=True)
-                g.map(sns.stripplot, level, "value")
-                g.add_legend()
-                for ax in g.axes.flat:
-                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
-                g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.marker_genes.stripplot.techniq_together.{}.png".format(quant_type, level)), dpi=300, bbox_inches="tight")
         comparisons.to_csv(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.metrics.csv".format(quant_type)))
 
-        # 3).
-        # Correlate Bulk samples
+    # 2b).
+    # CD69, CD82, etc...
+    for quant_type, exp_matrix in quant_types:
+        exp_matrix = exp_matrix.ix[matrix_norm.index].dropna()
+        matrix_norm = matrix_norm.ix[exp_matrix.index].dropna()
+        de_genes = [x for x in de_genes if x in exp_matrix.index]
 
-        # Signature genes
-        # Heatmap
+        # At gene level or at grna level
+        for level in ["gene", "grna"]:
+            print(quant_type, level)
+            markers = ["CD69", "CD82", "PDCD1", "CD38", "BCL7A", "CDC20", "TUBB", "ADA", "TUBA1B"]
 
-        # Correlation
+            sm = matrix_norm.T.groupby(level=['condition', level]).mean()[markers]
+            sm["data_type"] = "single_cell"
+            bm = exp_matrix.T.groupby(level=['condition', level]).mean()[markers]
+            # bm = bm.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
+            bm["data_type"] = "bulk"
+            bm = bm.ix[sm.index].dropna()
+            sm = sm.ix[bm.index].dropna()
+            e = pd.melt(sm.reset_index(), id_vars=['condition', level, 'data_type']).append(pd.melt(bm.reset_index(), id_vars=['condition', level, 'data_type']))
+
+            g = sns.FacetGrid(data=e, col="variable", row="data_type", hue="condition", sharey=True, sharex=True)
+            g.map(sns.stripplot, level, "value")
+            g.add_legend()
+            for ax in g.axes.flat:
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+            g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.marker_genes.stripplot.{}.png".format(quant_type, level)), dpi=300, bbox_inches="tight")
+
+            g = sns.FacetGrid(data=e, col="variable", row="condition", hue="data_type", sharey=True, sharex=True)
+            g.map(sns.stripplot, level, "value")
+            g.add_legend()
+            for ax in g.axes.flat:
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+            g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.marker_genes.stripplot.techniq_together.{}.png".format(quant_type, level)), dpi=300, bbox_inches="tight")
+
+            fig, axis = plt.subplots(
+                len(matrix_norm.columns.get_level_values('condition').drop_duplicates()),
+                len(markers),
+                figsize=(
+                    4 * len(markers),
+                    4 * len(matrix_norm.columns.get_level_values('condition').drop_duplicates()))
+            )
+            for i, condition in enumerate(matrix_norm.columns.get_level_values('condition').drop_duplicates()):
+                for j, marker in enumerate(markers):
+                    axis[i][j].scatter(sm.loc[condition, marker], bm.loc[condition, marker])
+                    axis[i][j].set_title("{} {}".format(condition, marker))
+                    c, p = pearsonr(sm.loc[condition, marker], bm.loc[condition, marker])
+                    axis[i][j].text(max(sm.loc[condition, marker]), max(bm.loc[condition, marker]), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
+            sns.despine(fig)
+            fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.{}.marker_genes.scatter.{}.png".format(quant_type, level)), dpi=300, bbox_inches="tight")
+
+    # 3).
+    # Correlate Bulk samples
+
+    # Signature genes
+    # Heatmap
+
+    # Correlation
 
 
 def flow_analysis():
