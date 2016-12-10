@@ -26,7 +26,7 @@ def normalize(df, experiment="", kind="total"):
         """
         Normalize expression by total number of counts per cell.
         """
-        return df.apply(lambda x: (x / x.sum()) * 1e4, axis=0)
+        return np.log2(1 + df.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
 
     def seurat_regress(df):
         """
@@ -35,29 +35,31 @@ def normalize(df, experiment="", kind="total"):
         import pandas.rpy.common as com
 
         run = robj.r("""
-            module unload R
-            module load gcc/6.0.0
-            module load texlive
-            module load R/3.2.3
-            srun -J seurat --mem 256000 -p longq -n 1 -c 24 --pty /cm/shared/apps/R/3.2.3/bin/R
+            # module unload R
+            # module load gcc/6.0.0
+            # module load texlive
+            # module load R/3.2.3
+            # srun -J seurat --mem 256000 -p longq -n 1 -c 24 --pty --x11 /cm/shared/apps/R/3.2.3/bin/R
 
-            function(to_norm, output){
+            function(hdf_file, output_file){
                 library(Seurat)
                 library(dplyr)
                 library(Matrix)
 
                 library("rhdf5")
-                root_dir = "/home/arendeiro/projects/crop-seq/results"
-                hdf_file = "CROP-seq_Jurkat_TCR.digital_expression.500genes.only_assigned.hdf5.gz"
-                hdf_block = "exp_matrix"
-                output_prefix = "CROP-seq_Jurkat_TCR.digital_expression.500genes.scde"
 
-                root_dir = path.expand(root_dir)  # hdf5 needs absolute paths
+                # root_dir = "/home/arendeiro/projects/crop-seq/results"
+                # hdf_file = "CROP-seq_Jurkat_TCR.digital_expression.500genes.only_assigned.hdf5.gz"
+                # hdf_file = paste(root_dir, hdf_file, sep="/")
+                # hdf_block = "exp_matrix"
+                # root_dir = path.expand(root_dir)  # hdf5 needs absolute paths
+                # output_name = "CROP-seq_Jurkat_TCR.digital_expression.500genes.only_assigned.seurat_regressed.hdf5.gz"
+                # output_file = paste(root_dir, output_name, sep="/")
 
                 # Load the exp dataset
-                raw_counts = h5read(paste(root_dir, hdf_file, sep="/"), hdf_block)
+                raw_counts = h5read(hdf_file, hdf_block)
 
-                # VERY IMPORTANT!: remember R is 1-based and the level indexes come from Python!
+                # VERY IMPORTANT!: remember R is 1-based and the level indexes come from Python (0-based)!
                 condition = as.character(raw_counts$block0_items_level0[raw_counts$block0_items_label0 + 1])
                 replicate = as.factor(as.character(raw_counts$block0_items_level1[raw_counts$block0_items_label1 + 1]))
                 cell = as.character(raw_counts$block0_items_level2[raw_counts$block0_items_label2 + 1])
@@ -114,45 +116,26 @@ def normalize(df, experiment="", kind="total"):
                 exp_subset_regressed <- RegressOut(exp_subset, latent.vars=c("nUMI", "percent.mito"))
 
                 # Write as hdf5
-                output_name = "CROP-seq_Jurkat_TCR.digital_expression.500genes.only_assigned.seurat_regressed.hdf5.gz"
-                output = paste(root_dir, output_name, sep="/")
-                h5createFile(output)
-                h5createGroup(output, "seurat_matrix")
-                h5write(as.matrix(exp_subset_regressed@scale.data), file=output, "seurat_matrix/matrix")
-                h5write(colnames(exp_subset_regressed@scale.data), file=output, "seurat_matrix/columns")
-                h5write(rownames(exp_subset_regressed@scale.data), file=output, "seurat_matrix/rows")
+                h5createFile(output_file)
+                h5createGroup(output_file, "seurat_matrix")
+                h5write(as.matrix(exp_subset_regressed@scale.data), file=output_file, "seurat_matrix/matrix")
+                h5write(colnames(exp_subset_regressed@scale.data), file=output_file, "seurat_matrix/columns")
+                h5write(rownames(exp_subset_regressed@scale.data), file=output_file, "seurat_matrix/rows")
                 H5close()
-
-                return(as.matrix(exp_subset_regressed@data))
-
-
-                # continue to explore
-                exp_subset_regressed <- MeanVarPlot(exp_subset_regressed ,fxn.x=expMean, fxn.y=logVarDivMean, x.low.cutoff=0.0125, x.high.cutoff=3, y.cutoff=0.5, do.contour=F, do.plot=F)
-
-                length(exp_subset_regressed@var.genes)
-
-                exp_subset_regressed <- PCA(exp_subset_regressed, pc.genes = exp_subset_regressed@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
-
-
             }
-
         """)
+        run(df,
+            os.path.join(results_dir, "{}.digital_expression.500genes.only_assigned.seurat_regressed.csv".format(experiment)),
+            os.path.join(results_dir, "{}.digital_expression.500genes.only_assigned.seurat_regressed.hdf5.gz".format(experiment)))
 
-        # convert to Python objects
-        norm = com.convert_robj(
-            run(df,
-                os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.csv".format(experiment))))
-
-        return norm
+        return read_seurat_hdf5(os.path.join(results_dir, "{}.digital_expression.500genes.only_assigned.seurat_regressed.hdf5.gz".format(experiment)))
 
     if kind == "total":
         norm = normalize_by_total(df)
-        norm.to_csv(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.csv".format(experiment)))
+        norm.to_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
         return norm
     else:
         regressed = seurat_regress(df).to_sparse(fill_value=0)
-        regressed.to_pickle(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.pickle".format(experiment)))
-        regressed.to_csv(os.path.join(results_dir, "digital_expression.500genes.{}.seurat_regressed.csv".format(experiment)))
         return regressed
 
 
@@ -175,7 +158,7 @@ def read_seurat_hdf5(hdf5_file):
     return seurat_matrix
 
 
-def unsupervised(df, prefix=""):
+def unsupervised(df, experiment="", filter_low=True):
     # Inspect
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE, MDS, LocallyLinearEmbedding, SpectralEmbedding, Isomap
@@ -183,41 +166,84 @@ def unsupervised(df, prefix=""):
 
     methods = ["PCA", "TSNE", "LocallyLinearEmbedding", "SpectralEmbedding", "Isomap", "MDS"]
 
-    fig, axis = plt.subplots(len(df.columns.levels), len(methods), figsize=(4 * len(df.columns.levels), 4 * len(methods)))
+    if filter_low:
+        df = df[df.sum().sort_values().tail(int(df.shape[1] * 0.25)).index]
+
+    level_mapping = dict(zip(df.columns.names, range(len(df.columns.names))))
+
+    # Cells grouped by gene or grna
+    for level in ["gene", "grna"]:
+        df_group = df.T.groupby(level=[level_mapping['condition'], level_mapping['gene']]).apply(np.median, axis=0).apply(pd.Series).T
+        df_group.index = df.index
+
+        fig, axis = plt.subplots(len(df_group.columns.levels), len(methods), figsize=(3 * len(methods), 3 * len(df_group.columns.levels)))
+        for i, method in enumerate(methods):
+            model = eval(method)()
+            fitted = model.fit_transform(df_group.T)
+
+            for j, level in enumerate(df_group.columns.names):
+                if level == "cell":
+                    continue
+                print(method, level)
+
+                # color mapping
+                integer_map = dict(zip(df_group.columns.levels[j], sns.color_palette("colorblind") * int(1e5)))
+                colors = [integer_map[x] for x in df_group.columns.get_level_values(level)]
+
+                axis[j, i].scatter(fitted[:, 0], fitted[:, 1], color=colors, alpha=0.4)
+
+                if j == len(df_group.columns.levels) - 1:
+                    for p in range(fitted.shape[0]):
+                        axis[j, i].text(fitted[p, 0], fitted[p, 1], " ".join(df_group.columns[p]), color=colors[p], alpha=0.8)
+
+                if method == "PCA":
+                    fig2, axis2 = plt.subplots(1)
+                    axis2.plot(range(1, fitted.shape[0] + 1), (model.explained_variance_ / model.explained_variance_.sum()) * 100, "-o")
+                    axis2.set_xlabel("PC")
+                    axis2.set_ylabel("% variance explained")
+                    fig2.savefig(os.path.join(results_dir, "{}.clustering.grouped_{}.PCA_variance.svg".format(experiment, level)), bbox_inches="tight")
+        # fig.savefig(os.path.join(results_dir, "{}.clustering.grouped_{}.png".format(experiment, level)), bbox_inches="tight", dpi=300)
+        fig.savefig(os.path.join(results_dir, "{}.clustering.grouped_{}.svg".format(experiment, level)), bbox_inches="tight")
+
+    fig, axis = plt.subplots(len(df.columns.levels), len(methods) + 1, figsize=(3 * len(df.columns.levels), 3 * len(methods)))
     for i, method in enumerate(methods):
-        fitted = eval(method)().fit_transform(df)
+        model = eval(method)()
+        fitted = model.fit_transform(df.T)
 
         for j, level in enumerate(df.columns.names):
+            if level == "cell":
+                continue
             print(method, level)
 
             # color mapping
-            integer_map = dict([(val, cm.viridis(i)) for i, val in enumerate(set(df.columns.get_level_values(level)))])
+            integer_map = dict(zip(df.columns.levels[j], sns.color_palette("colorblind") * int(1e5)))
             colors = [integer_map[x] for x in df.columns.get_level_values(level)]
 
-            axis[i, j].scatter(fitted[:, 0], fitted[:, 1], color=colors, alpha=0.1)
-    fig.savefig(os.path.join(results_dir, "clustering.{}.png".format(prefix)), bbox_inches="tight", dpi=300)
+            axis[j, i].scatter(fitted[:, 0], fitted[:, 1], color=colors, alpha=0.4)
+    fig.savefig(os.path.join(results_dir, "{}.clustering.png".format(experiment)), bbox_inches="tight", dpi=300)
 
 
-def differential_genes(pos, neg, assignment, prefix="", method="mannwhitney"):
+def get_level_colors(index):
+    pallete = sns.color_palette("colorblind") * int(1e6)
+
+    colors = list()
+
+    if hasattr(index, "levels"):
+        for level in index.levels:
+            color_dict = dict(zip(level, pallete))
+            level_colors = [color_dict[x] for x in index.get_level_values(level.name)]
+            colors.append(level_colors)
+    else:
+        color_dict = dict(zip(set(index), pallete))
+        index_colors = [color_dict[x] for x in index]
+        colors.append(index_colors)
+
+    return colors
+
+
+def differential_genes(df, experiment, method="pca"):
     """
     """
-    from scipy.stats import mannwhitneyu
-    import multiprocessing
-    import parmap
-    from statsmodels.sandbox.stats.multicomp import multipletests
-
-    def mannwhitneyu_test(g):
-        """
-        Test two groups of cells for differences in gene `g`
-        using Mann-Whitney's U test.
-        Report also log fold-change.
-        """
-        a = pos.ix[g]
-        b = neg.ix[g]
-        a_ = a.mean()
-        b_ = b.mean()
-        return [a_, b_, np.log2((a_) / (b_))] + list(mannwhitneyu(a, b))
-
     def scde():
         return
 
@@ -226,36 +252,62 @@ def differential_genes(pos, neg, assignment, prefix="", method="mannwhitney"):
         pd.DataFrame([df.columns, df.columns.str.get(0)], index=["cell", "condition"]).T.to_csv("col_matrix.csv", index=False)
         return
 
-    print("Doing differnetial gene expression for experiment: '{}'".format(experiment))
-    print("Comparing expression of {} with {} cells in {} genes.".format(pos.shape[1], neg.shape[1], pos.shape[0]))
+    def pca(df, level="gene", filter_low=True):
+        from sklearn.decomposition import PCA
+        level_mapping = dict(zip(df.columns.names, range(len(df.columns.names))))
 
-    if method == "deseq":
-        return deseq2()
+        if filter_low:
+            df = df[df.sum().sort_values().tail(int(df.shape[1] * 0.25)).index]
 
-    pos["intercept"] = 0.1
-    neg["intercept"] = 0.1
-    # apply test function (manwhitney-U)
-    stats = pd.DataFrame(
-        map(
-            lambda x:
-                pd.Series(x),
-                parmap.map(
-                    mannwhitneyu_test if method == "mannwhitney" else test_2,
-                    pos.index,
-                    parallel=True
-                )
-        )
-    )
-    stats.columns = ["a_mean", "b_mean", "fold_change", "stat", "p_value"]
-    stats.index = pos.index.tolist()
-    stats["q_value"] = multipletests(stats["p_value"], method="fdr_bh")[1]
-    stats["log_difference"] = stats["a_mean"] - stats["b_mean"]
-    stats["log_p_value"] = -np.log10(stats["p_value"])
-    stats["log_q_value"] = -np.log10(stats["q_value"])
-    stats.index.name = "gene"
-    stats.to_csv(os.path.join(results_dir, "differential_expression.{}.stimutation.csv".format(prefix)), index=True)
+        # Cells grouped by gene
+        df_group = df.T.groupby(level=[level_mapping["condition"], level_mapping[level]]).apply(np.median, axis=0).apply(pd.Series).T
+        df_group.index = df.index
 
-    return stats
+        fitted = PCA().fit_transform(df_group)  # for genes
+
+        r = pd.Series(fitted[:, 1], index=df.index).sort_values()
+        g = sns.clustermap(
+            df.ix[r[abs(r) > 1.5].index],
+            metric="correlation",
+            z_score=0,
+            vmin=-3, vmax=3,
+            row_cluster=True, col_cluster=True,
+            yticklabels=True, xticklabels=False,
+            col_colors=get_level_colors(df.columns),
+            figsize=(15, 15))
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+            item.set_fontsize(8)
+        g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
+
+        r = pd.Series(fitted[:, 1], index=df.index).sort_values()
+        g = sns.clustermap(
+            df_group.ix[r[abs(r) > 0.5].index],
+            metric="correlation",
+            z_score=0,
+            vmin=-3, vmax=3,
+            row_cluster=True, col_cluster=True,
+            yticklabels=True, xticklabels=True,
+            col_colors=get_level_colors(df_group.columns),
+            figsize=(15, 15))
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+            item.set_fontsize(8)
+        g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.{}_level.png".format(experiment, n_genes, level)), bbox_inches="tight", dpi=300)
+
+        return pd.Series(fitted[:, 1], index=df.index).sort_values()
+
+    print("Getting differential gene expression for experiment: '{}'".format(experiment))
+
+    if method == "scde":
+        scde()
+    elif method == "deseq":
+        deseq2(df)
+    elif method == "pca":
+        diff = pca(df)
+        diff.to_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), index=True)
 
 
 def enrich_signature(stats, prefix=""):
@@ -301,23 +353,6 @@ def enrich_signature(stats, prefix=""):
 
 
 def stimulation_signature(assignment, df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, cond1="stimulated", cond2="unstimulated"):
-    def get_level_colors(index):
-        from matplotlib.colors import colorConverter
-        pallete = sns.color_palette("colorblind") * int(1e6)
-
-        colors = list()
-
-        if hasattr(index, "levels"):
-            for level in index.levels:
-                color_dict = dict(zip(level, pallete))
-                level_colors = [color_dict[x] for x in index.get_level_values(level.name)]
-                colors.append(level_colors)
-        else:
-            color_dict = dict(zip(set(index), pallete))
-            index_colors = [color_dict[x] for x in index]
-            colors.append(index_colors)
-
-        return colors
 
     def generate_signature_matrix(array, n=101, bounds=(0, 0)):
         """
@@ -1416,7 +1451,7 @@ def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500,
             "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.{}.p_value.pdf".format(gene_set_library)), bbox_inches="tight")
 
 
-def plot_genes():
+def plot_genes(exp):
     """
     """
     genes = {
@@ -1426,9 +1461,6 @@ def plot_genes():
         "other": ["DUSP2", "DUSP5", "VGF", "CSF2", "BIRC3"],
     }
     # matrices
-    # raw counts
-    exp = pd.read_pickle(os.path.join(results_dir, "digital_expression.{}genes.{}.pickle".format(n_genes, experiment)))
-
     # raw group counts
     exp2 = exp.to_dense().ix[[y for x in genes.values() for y in x]].dropna().T
 
@@ -1903,8 +1935,8 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
                     single_exp_matrix = single_exp_matrix[~single_exp_matrix.index.str.contains("library|CTRL")]
 
                     # remove ribosomal, mitochondrial genes
-                    single_exp_matrix = single_exp_matrix[(~single_exp_matrix.index.str.contains("^RP.*-")) & (~single_exp_matrix.index.str.contains("^MT-"))]
-                    bulk_exp_matrix = bulk_exp_matrix[(~bulk_exp_matrix.index.str.contains("^RP.*-")) & (~bulk_exp_matrix.index.str.contains("^MT-"))]
+                    single_exp_matrix = single_exp_matrix[(~single_exp_matrix.index.str.contains("^RP.*")) & (~single_exp_matrix.index.str.contains("^MT-"))]
+                    bulk_exp_matrix = bulk_exp_matrix[(~bulk_exp_matrix.index.str.contains("^RP.*")) & (~bulk_exp_matrix.index.str.contains("^MT-"))]
 
                     # align indices
                     single_exp_matrix = single_exp_matrix.ix[bulk_exp_matrix.index].dropna()
@@ -1938,8 +1970,8 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
     single_exp_matrix = single_exp_matrix[~single_exp_matrix.index.str.contains("library|CTRL")]
 
     # remove ribosomal, mitochondrial genes
-    single_exp_matrix = single_exp_matrix[(~single_exp_matrix.index.str.contains("^RP.*-")) & (~single_exp_matrix.index.str.contains("^MT-"))]
-    bulk_exp_matrix = bulk_exp_matrix[(~bulk_exp_matrix.index.str.contains("^RP.*-")) & (~bulk_exp_matrix.index.str.contains("^MT-"))]
+    single_exp_matrix = single_exp_matrix[(~single_exp_matrix.index.str.contains("^RP.*")) & (~single_exp_matrix.index.str.contains("^MT-"))]
+    bulk_exp_matrix = bulk_exp_matrix[(~bulk_exp_matrix.index.str.contains("^RP.*")) & (~bulk_exp_matrix.index.str.contains("^MT-"))]
 
     # align indices
     single_exp_matrix = single_exp_matrix.ix[bulk_exp_matrix.index].dropna()
@@ -2116,8 +2148,8 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
             single_diff = single_diff[~single_diff.index.str.contains("library|CTRL")]
 
             # remove ribosomal, mitochondrial genes
-            single_diff = single_diff[(~single_diff.index.str.contains("^RP.*-")) & (~single_diff.index.str.contains("^MT-"))]
-            bulk_diff = bulk_diff[(~bulk_diff.index.str.contains("^RP.*-")) & (~bulk_diff.index.str.contains("^MT-"))]
+            single_diff = single_diff[(~single_diff.index.str.contains("^RP.*")) & (~single_diff.index.str.contains("^MT-"))]
+            bulk_diff = bulk_diff[(~bulk_diff.index.str.contains("^RP.*")) & (~bulk_diff.index.str.contains("^MT-"))]
 
             # match the indices
             single_diff = single_diff.ix[bulk_diff.index].dropna()
@@ -2196,8 +2228,8 @@ def compare_bulk(matrix_norm, cond1="stimulated", cond2="unstimulated"):
             single_diff = single_diff[~single_diff.index.str.contains("library|CTRL")]
 
             # remove ribosomal, mitochondrial genes
-            single_diff = single_diff[(~single_diff.index.str.contains("^RP.*-")) & (~single_diff.index.str.contains("^MT-"))]
-            bulk_diff = bulk_diff[(~bulk_diff.index.str.contains("^RP.*-")) & (~bulk_diff.index.str.contains("^MT-"))]
+            single_diff = single_diff[(~single_diff.index.str.contains("^RP.*")) & (~single_diff.index.str.contains("^MT-"))]
+            bulk_diff = bulk_diff[(~bulk_diff.index.str.contains("^RP.*")) & (~bulk_diff.index.str.contains("^MT-"))]
 
             # sort by best
             single_diff["abs_cZ"] = abs(single_diff["cZ"])
@@ -2480,18 +2512,18 @@ guide_annotation = os.path.join("metadata", "guide_annotation.csv")
 guide_annotation = pd.read_csv(guide_annotation)
 
 n_genes = 500
-experiment, rows = prj.sheet.df.groupby(['experiment']).groups.items()[2]
+experiment = prj.sheet.df['experiment'].drop_duplicates()[4]
 
 
 # get expression
 for n_genes in [500]:
-    for experiment, rows in prj.sheet.df.groupby(['experiment']):
+    for experiment in prj.sheet.df['experiment'].drop_duplicates():
         print(experiment)
 
         assignment = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)))
 
-        # exp = pd.read_hdf(os.path.join(results_dir, "{}.digital_expression.{}genes.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
-        exp_assigned = pd.read_hdf(os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
+        counts_file = os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes))
+        exp_assigned = pd.read_hdf(counts_file, "exp_matrix", compression="gzip")
         exp_assigned = exp_assigned.T.reset_index()
         exp_assigned['replicate'] = exp_assigned['replicate'].astype(np.int64).astype(str)
         exp_assigned['gene'] = pd.np.nan
@@ -2506,23 +2538,35 @@ for n_genes in [500]:
         # Normalize
         # Approach 1:
         # normalize by total
-        # matrix_norm = normalize(matrix, experiment=experiment, kind="total")
+        matrix_norm = normalize(exp_assigned, experiment=experiment, kind="total")
 
         # Approach 2:
         # regress out based on total number and MT-genes using Seurat
-        matrix_norm = normalize(exp_assigned, kind="seurat")
+        # matrix_norm = normalize(counts_file, kind="seurat")
 
-        hdf5_file = os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.seurat_regressed.hdf5.gz".format(experiment, n_genes))
-        matrix_norm = read_seurat_hdf5(hdf5_file)
+        # hdf5_file = os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.seurat_regressed.hdf5.gz".format(experiment, n_genes))
+        # matrix_norm = read_seurat_hdf5(hdf5_file)
 
-        #
+        # Filtering/Cleanup
+        # remove lowly expressed genes
+        df = matrix_norm[matrix_norm.sum(1) > 10]
+
+        # remove gRNAs
+        df = df[~df.index.str.contains("library|CTRL")]
+
+        # remove ribosomal, mitochondrial genes
+        df = df[(~df.index.str.contains("^RP.*")) & (~df.index.str.contains("^MT-"))]
+
+        # remove Essential genes
+        df = df[df.columns[~df.columns.get_level_values("gene").isin(["DHODH", "MVD", "TUBB"])]]
 
         # Unsupervised
 
         # Approach 1:
         # apply dimentionality reduction methods/clustering
         # and discover biological axis related with stimulation
-        unsupervised(matrix_norm)
+        unsupervised(df)
+        differential_genes(df, experiment=experiment, method="pca")
 
         # Approach 2 (just a bit supervised though):
         # get differential genes between conditions from CTRL cells only
@@ -2532,8 +2576,8 @@ for n_genes in [500]:
 
         # variant A:
 
-        # get differential genes with scde
-        # stats = differential_genes(pos, neg, assignment, prefix=prefix) <- todo: add scde R code wrapped here
+        # get differential genes with some method
+        # differential_genes(df, experiment=experiment, method="scde")  # <- todo: add scde R code wrapped here
 
         # visualize signature and make signature position assignments per cell/gRNA/gene
         stimulation_signature(assignment, matrix_norm)
