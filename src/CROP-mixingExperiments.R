@@ -51,8 +51,8 @@ dge_long_mean[,total_g1:=sum(g1),by="cell_barcode"]
 dge_long_mean[,species_dom:=ifelse(diff_mh_g1>0,"MOUSE",ifelse(diff_mh_g1<0,"HUMAN","tie")),]
 
 dge_wide_mean=reshape(dge_long_mean,idvar="cell_barcode",timevar="species",direction="wide")
-dge_wide_mean[,doublet:=ifelse(percent_g1.MOUSE>10&percent_g1.MOUSE<90,TRUE,FALSE),]
-double_frac=(nrow(dge_wide_mean[percent_g1.MOUSE>10&percent_g1.MOUSE<90])*2)/nrow(dge_wide_mean)
+dge_wide_mean[,doublet:=ifelse(percent_g1.MOUSE>20&percent_g1.MOUSE<80,TRUE,FALSE),]
+double_frac=(nrow(dge_wide_mean[percent_g1.MOUSE>20&percent_g1.MOUSE<80])*2)/nrow(dge_wide_mean)
 
 
 #ratio plots
