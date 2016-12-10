@@ -134,6 +134,8 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
             reads_per_cell, genes_per_cell, mito_per_cell, ribo_per_cell, duplicates_per_cell.ix[reads_per_cell.index]  # transcriptome stats
         ], 1)
         combined_stats.columns = ["reads_per_cell", "genes_per_cell", "mito_per_cell", "ribo_per_cell", "duplicates_per_cell"]
+        combined_stats.to_csv(os.path.join(results_dir, "stats.{}.{}genes.all_stats_per_cell.all_cells.csv".format(sample.name, n_genes)))
+
         g = sns.pairplot(combined_stats, diag_kws={"bins": 100}, plot_kws={"s": 10, "alpha": 0.5})
         g.fig.savefig(
             os.path.join(results_dir, "stats.{}.{}genes.pairwise_dists.svg".format(sample.name, n_genes)),
@@ -396,6 +398,7 @@ fig.savefig(os.path.join(results_dir, "figures", "stats.selected.bubbles.svg"), 
 # sample_name = "CROP-seq_HEK293T_1_resequenced"
 # sample = [s for s in prj.samples if s.name == sample_name][0]
 
+all_counts = pd.DataFrame()
 for sample in prj.samples:
     print(sample)
     try:
@@ -449,15 +452,14 @@ for sample in prj.samples:
 
         # Quantify
         # in how many cells is the dominant gRNA dominanting by less than 3 times than itself?
-        fold = scores_in.drop(["assignment", "score", "concordance_ratio"], axis=1).apply(
-            lambda x: [(x[y] + 1) / (float(sum(x.drop(y))) + 1) for y in x.index], axis=1).max(1)
+        fold = scores_in.drop(["assignment", "score", "concordance_ratio"], axis=1).max(axis=1) / scores_in.drop(["assignment", "score", "concordance_ratio"], axis=1).sum(axis=1)
 
         counts.loc["not assigned", threshold] = exp_counts[exp_counts > threshold].shape[0] - scores_in.shape[0]
         counts.loc["% not assigned", threshold] = (counts.loc["not assigned", threshold] / float(exp_counts[exp_counts > threshold].shape[0])) * 100
-        counts.loc["singlets", threshold] = (fold >= 3).sum()
-        counts.loc["% singlets", threshold] = ((fold >= 3).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
-        counts.loc["impurities", threshold] = (fold < 3).sum()
-        counts.loc["% impurities", threshold] = ((fold < 3).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
+        counts.loc["singlets", threshold] = (fold >= 0.75).sum()
+        counts.loc["% singlets", threshold] = ((fold >= 0.75).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
+        counts.loc["impurities", threshold] = (fold < 0.75).sum()
+        counts.loc["% impurities", threshold] = ((fold < 0.75).sum() / float(exp_counts[exp_counts > threshold].shape[0])) * 100
     counts.columns.name = "genes_covered"
     counts.index.name = "metric"
 
@@ -477,6 +479,42 @@ for sample in prj.samples:
     sns.despine(fig)
     fig.savefig(os.path.join(results_dir, "figures", "stats.{}.grna_assignemnt.various_thresholds.svg".format(sample.name)), bbox_inches="tight")
 
+    counts["sample_name"] = sample.name
+    all_counts = all_counts.append(counts)
+
+# Plot all combined (for reviewer figure 2c)
+
+mean = all_counts[all_counts['sample_name'] != "CROP-seq_HEK293T_1_resequenced"].drop("sample_name", axis=1)
+
+fig, axis = plt.subplots(1)
+sns.barplot(
+    x="genes_covered",
+    y="value",
+    hue="metric",
+    data=pd.melt(mean[mean.index.str.contains("%")].reset_index(), id_vars=["metric"]),
+    ax=axis)
+axis.set_ylim(0, 100)
+axis.set_xlabel("Genes covered per cell")
+axis.set_ylabel("Percentage of all cells")
+sns.despine(fig)
+fig.savefig(os.path.join(results_dir, "figures", "stats.all_Jurkat_samples.grna_assignemnt.various_thresholds.svg".format(sample.name)), bbox_inches="tight")
+
+
+# Figure 1i
+mean = all_counts.drop("sample_name", axis=1)
+
+fig, axis = plt.subplots(1)
+sns.barplot(
+    x="genes_covered",
+    y="value",
+    hue="metric",
+    data=pd.melt(mean[mean.index.str.contains("%")].reset_index(), id_vars=["metric"]),
+    ax=axis)
+axis.set_ylim(0, 100)
+axis.set_xlabel("Genes covered per cell")
+axis.set_ylabel("Percentage of all cells")
+sns.despine(fig)
+fig.savefig(os.path.join(results_dir, "figures", "stats.all_samples.grna_assignemnt.various_thresholds.svg".format(sample.name)), bbox_inches="tight")
 
 #
 
@@ -646,14 +684,34 @@ for name in ["Drop-seq_humanmouse_macosko", "Drop-seq_mouse_retina_macosko"]:
         # # genes per cell
         genes_per_cell[name] = exp.apply(lambda x: (x > 0).sum(), axis=0).values
 
+# add Datlinger uncorrected
+old = [
+    "CROP-seq_HEK293T_1_resequenced",
+    "CROP-seq_Jurkat_TCR_stimulated_r1",
+    "CROP-seq_Jurkat_TCR_stimulated_r2",
+    "CROP-seq_Jurkat_TCR_unstimulated_r1",
+    "CROP-seq_Jurkat_TCR_unstimulated_r2",
+    "Drop-seq_HEK293T-3T3"]
+for name in old:
+    for n_genes in [500]:
+        print(name, n_genes)
+        # Gather additional metrics from transcriptome:
+        try:
+            exp = pd.read_csv(
+                os.path.join("results_pipeline_uncorrected", name, "digital_expression.{}genes.tsv".format(n_genes)),
+                sep="\t").set_index("GENE")
+        except IOError:
+            continue
+        # reads per cell
+        reads_per_cell[name + "-uncorrected"] = exp.sum(axis=0).values
+        # # genes per cell
+        genes_per_cell[name + "-uncorrected"] = exp.apply(lambda x: (x > 0).sum(), axis=0).values
 
-names = pd.Series([q.name for q in prj.samples])
+
+names = pd.Series([q.name for q in prj.samples] + [n + "-uncorrected" for n in old])
 groups = {
-    "Datlinger - old beads": names[names.str.contains("r[1-2]")],
-    "Datlinger - new beads": names[names.str.contains("r[3-6]")],
-    "Macosko - mix": ["Drop-seq_humanmouse_macosko"],
-    "Macosko - retina": ["Drop-seq_mouse_retina_macosko"],
-    "Macosko - both": ["Drop-seq_humanmouse_macosko", "Drop-seq_mouse_retina_macosko"],
+    "Datlinger - old beads uncorrected": names[names.str.contains("r[1-2]") & names.str.contains("uncorrected")],
+    "Datlinger - old beads corrected": names[names.str.contains("r[1-2]") & (~names.str.contains("uncorrected"))]
 }
 
 fig, axis = plt.subplots(2, 2, figsize=(4 * 2, 4 * 2))
