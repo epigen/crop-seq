@@ -332,46 +332,77 @@ def differential_genes(df, experiment, method="pca"):
         diff.to_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), index=True)
 
 
-def enrich_signature(stats, prefix=""):
+def enrich_signature(method="pca"):
     """
     """
-    # load stats of diff genes
-    stats = pd.read_csv(
-        os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
-    )
-    stats.index.name = "gene_name"
-    # remove artitificial chromosomes
-    stats = stats[
-        (~stats.index.str.startswith("CTRL")) &
-        (~stats.index.str.contains("library_"))]
+    if method == "pca":
+        diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
+        degs = pd.Series(diff[abs(diff) > np.percentile(abs(diff), 99)].index)
+        degs.name = "gene_name"
 
-    for d, name in [(degs, "_all_genes"), (degs[degs["Z"] > 0], "_up_genes"), (degs[degs["Z"] < 0], "_down_genes")]:
+        enr = enrichr(degs.reset_index())
+        enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(method)), index=False, encoding="utf8")
 
-        enr = enrichr(d.reset_index())
-        enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(prefix + name)), index=False, encoding="utf8")
+        # Plot top N terms of each library
+        n = 8
 
-        for gene_set_library in enr["gene_set_library"].unique():
+        to_plot = [
+            'GO_Biological_Process_2015',
+            "KEGG_2016",
+            "WikiPathways_2016",
+            "Reactome_2016",
+            "BioCarta_2016",
+            "NCI-Nature_2016"]
 
-            p = enr[enr["gene_set_library"] == gene_set_library]
-            # p = p[p["adjusted_p_value"] < 0.05]
+        p = enr.ix[enr[enr['gene_set_library'].isin(to_plot)].groupby("gene_set_library")['combined_score'].nlargest(n).index.get_level_values(1)].sort_values("combined_score", ascending=False)
 
-            if p.shape[0] < 1:
-                continue
+        fig, axis = plt.subplots(1)
+        sns.barplot(data=p, y="description", x="combined_score", orient="horiz", hue="gene_set_library")
+        axis.set_xlabel("Combined score")
+        sns.despine(fig)
+        fig.savefig(os.path.join(results_dir, "differential_expression.{}.enrichr.top{}_terms.svg".format(method, n)), bbox_inches="tight")
 
-            p = p.sort_values("combined_score").tail(25)
+    elif method == "scde":
+        # load stats of diff genes
+        stats = pd.read_csv(
+            os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
+        )
+        stats.index.name = "gene_name"
+        # remove artitificial chromosomes
+        stats = stats[
+            (~stats.index.str.startswith("CTRL")) &
+            (~stats.index.str.contains("library_"))]
 
-            print(gene_set_library)
-            fig, axis = plt.subplots(1)
-            sns.barplot(p["combined_score"], p["description"], orient="horiz", ax=axis)
-            axis.set_xlabel("Combined score")
-            sns.despine(fig)
-            fig.savefig(os.path.join(results_dir, "differential_expression.{}.enrichr.{}.svg".format(prefix + name, gene_set_library)), bbox_inches="tight")
+        degs = pd.read_csv(
+            os.path.join(results_dir, "{}.digital_expression.{}genes.scde.diff_expr.csv".format(experiment, n_genes)), index_col=0
+        )
+        for d, name in [(degs, "_all_genes"), (degs[degs["Z"] > 0], "_up_genes"), (degs[degs["Z"] < 0], "_down_genes")]:
 
-    # Fig 1c
-    fig, axis = plt.subplots()
-    sns.distplot(abs(stats["Z"]), kde=False, bins=100, ax=axis)
-    # axis.set_yscale("log")
-    fig.savefig(os.path.join(results_dir, "differential_expression.{}.posterior_distribution.svg".format(prefix + "_all_genes")), bbox_inches="tight")
+            enr = enrichr(d.reset_index())
+            enr.to_csv(os.path.join(results_dir, "differential_expression.{}.{}.enrichr.csv".format(method, name)), index=False, encoding="utf8")
+
+            for gene_set_library in enr["gene_set_library"].unique():
+
+                p = enr[enr["gene_set_library"] == gene_set_library]
+                # p = p[p["adjusted_p_value"] < 0.05]
+
+                if p.shape[0] < 1:
+                    continue
+
+                p = p.sort_values("combined_score").tail(25)
+
+                print(gene_set_library)
+                fig, axis = plt.subplots(1)
+                sns.barplot(p["combined_score"], p["description"], orient="horiz", ax=axis)
+                axis.set_xlabel("Combined score")
+                sns.despine(fig)
+                fig.savefig(os.path.join(results_dir, "differential_expression.{}.{}.enrichr.{}.svg".format(method, name, gene_set_library)), bbox_inches="tight")
+
+        # Fig 1c
+        fig, axis = plt.subplots()
+        sns.distplot(abs(stats["Z"]), kde=False, bins=100, ax=axis)
+        # axis.set_yscale("log")
+        fig.savefig(os.path.join(results_dir, "differential_expression.{}.all_genes.posterior_distribution.svg".format(method)), bbox_inches="tight")
 
 
 def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, method="pca", cond1="stimulated", cond2="unstimulated"):
@@ -2353,6 +2384,7 @@ for n_genes in [500]:
         # and discover biological axis related with stimulation
         unsupervised(df)
         differential_genes(df, experiment=experiment, method="pca")
+        enrich_signature(method="pca")
 
         # Approach 2 (just a bit supervised though):
         # get differential genes between conditions from CTRL cells only
