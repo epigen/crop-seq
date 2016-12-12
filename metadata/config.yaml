@@ -46,11 +46,11 @@ genomes:
   mouse: mm10
 
 transcriptomes:
-  human: hg38
+  human: hg38_cdna
   human_hek: hg38_spiked_HEKlibrary
   human_tcr: hg38_spiked_Tcrlibrary
   humanmouse: hg19_mm10_transgenes
-  mouse: mm10
+  mouse: mm10_cdna
 
 compute:
   # submission_template: the submission form which will be replaced with compute resource parameters

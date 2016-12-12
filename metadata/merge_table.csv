@@ -1,24 +1,4 @@
 sample_name,data_source,flowcell,lane,BSF_name,demultiplex_run,library_label,barcode_sequence,library_adapter,c_dsDNA_ng_ul,avg_size_bp,molarity_nM,desired_nM,dil_sample_ul,dil_EBTween_ul,pooling_check_ng_ul,pooling_check_nM
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run1_tagA_stimulated_S17511,,J1A,TAAGGCGA,NexteraXT_D701,6.96,575,18.3399209486,4,5,17.9249011858,1.74,4.5849802372
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run1_tagB_stimulated_S17512,,J1B,CGTACTAG,NexteraXT_D702,7.44,575,19.604743083,4,5,19.5059288538,1.74,4.5849802372
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0256_HCVGMBBXX,4,Jurkat_TCR_run2_tagA_stimulated_S17515,,J2A,AGGCAGAA,NexteraXT_D703,8.6,575,22.6613965744,4,5,23.3267457181,1.62,4.2687747036
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0256_HCVGMBBXX,4,Jurkat_TCR_run2_tagB_stimulated_S17516,,J2B,GGACTCCT,NexteraXT_D705,9.04,575,23.8208168643,4,5,24.7760210804,1.62,4.2687747036
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,1,DROP_0003_A_Jurkat_27_10_run1_stimulated_S19575,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,1,DROP_0003_D_Jurkat_7_11_run1_stimulated_S19578,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,2,DROP_0003_A_Jurkat_27_10_run1_stimulated_S19575,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,2,DROP_0003_D_Jurkat_7_11_run1_stimulated_S19578,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,3,DROP_0003_A_Jurkat_27_10_run1_stimulated_S19575,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,3,DROP_0003_D_Jurkat_7_11_run1_stimulated_S19578,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,4,DROP_0003_A_Jurkat_27_10_run1_stimulated_S19575,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0273_HTHNYBGXY,4,DROP_0003_D_Jurkat_7_11_run1_stimulated_S19578,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,1,DROP_0003_E_Jurkat_7_11_run2_stimulated_S19929,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,2,DROP_0003_E_Jurkat_7_11_run2_stimulated_S19929,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,3,DROP_0003_E_Jurkat_7_11_run2_stimulated_S19929,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,4,DROP_0003_E_Jurkat_7_11_run2_stimulated_S19929,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,1,DROP_0003_F_Jurkat_7_11_run3_stimulated_S19930,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,2,DROP_0003_F_Jurkat_7_11_run3_stimulated_S19930,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,3,DROP_0003_F_Jurkat_7_11_run3_stimulated_S19930,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_stimulated,bsf_samples,BSF_0276_HTHMVBGXY,4,DROP_0003_F_Jurkat_7_11_run3_stimulated_S19930,,,,,,,,,,,,
 CROP-seq_Jurkat_TCR_stimulated_r1,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run1_tagA_stimulated_S17511,,J1A,TAAGGCGA,NexteraXT_D701,6.96,575,18.3399209486,4,5,17.9249011858,1.74,4.5849802372
 CROP-seq_Jurkat_TCR_stimulated_r1,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run1_tagB_stimulated_S17512,,J1B,CGTACTAG,NexteraXT_D702,7.44,575,19.604743083,4,5,19.5059288538,1.74,4.5849802372
 CROP-seq_Jurkat_TCR_stimulated_r2,bsf_samples,BSF_0256_HCVGMBBXX,4,Jurkat_TCR_run2_tagA_stimulated_S17515,,J2A,AGGCAGAA,NexteraXT_D703,8.6,575,22.6613965744,4,5,23.3267457181,1.62,4.2687747036
@@ -39,22 +19,6 @@ CROP-seq_Jurkat_TCR_stimulated_r6,bsf_samples,BSF_0276_HTHMVBGXY,1,DROP_0003_F_J
 CROP-seq_Jurkat_TCR_stimulated_r6,bsf_samples,BSF_0276_HTHMVBGXY,2,DROP_0003_F_Jurkat_7_11_run3_stimulated_S19930,,,,,,,,,,,,
 CROP-seq_Jurkat_TCR_stimulated_r6,bsf_samples,BSF_0276_HTHMVBGXY,3,DROP_0003_F_Jurkat_7_11_run3_stimulated_S19930,,,,,,,,,,,,
 CROP-seq_Jurkat_TCR_stimulated_r6,bsf_samples,BSF_0276_HTHMVBGXY,4,DROP_0003_F_Jurkat_7_11_run3_stimulated_S19930,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run3_tagA_unstimulated_S17513,,J3A,TCCTGAGC,NexteraXT_D704,9.82,575,25.8761528327,4,5,27.3451910408,1.74,4.5849802372
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run3_tagB_unstimulated_S17514,,J3B,CTCTCTAC,NexteraXT_D707,8.2,575,21.6073781291,4,5,22.0092226614,1.74,4.5849802372
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0256_HCVGMBBXX,4,Jurkat_TCR_run4_tagA_unstimulated_S17517,,J4A,TAGGCATG ,NexteraXT_D706,8.8,575,23.1884057971,4,5,23.9855072464,1.62,4.2687747036
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0256_HCVGMBBXX,4,Jurkat_TCR_run4_tagB_unstimulated_S17518,,J4B,CAGAGAGG,NexteraXT_D708,7.2,575,18.9723320158,4,5,18.7154150198,1.62,4.2687747036
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,1,DROP_0003_B_Jurkat_27_10_run3_naive_S19576,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,1,DROP_0003_C_Jurkat_27_10_run4_naive_S19577,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,2,DROP_0003_B_Jurkat_27_10_run3_naive_S19576,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,2,DROP_0003_C_Jurkat_27_10_run4_naive_S19577,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,3,DROP_0003_B_Jurkat_27_10_run3_naive_S19576,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,3,DROP_0003_C_Jurkat_27_10_run4_naive_S19577,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,4,DROP_0003_B_Jurkat_27_10_run3_naive_S19576,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0273_HTHNYBGXY,4,DROP_0003_C_Jurkat_27_10_run4_naive_S19577,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0276_HTHMVBGXY,1,DROP_0003_G_Jurkat_7_11_run4_naive_S19931,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0276_HTHMVBGXY,2,DROP_0003_G_Jurkat_7_11_run4_naive_S19931,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0276_HTHMVBGXY,3,DROP_0003_G_Jurkat_7_11_run4_naive_S19931,,,,,,,,,,,,
-CROP-seq_Jurkat_TCR_unstimulated,bsf_samples,BSF_0276_HTHMVBGXY,4,DROP_0003_G_Jurkat_7_11_run4_naive_S19931,,,,,,,,,,,,
 CROP-seq_Jurkat_TCR_unstimulated_r1,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run3_tagA_unstimulated_S17513,,J3A,TCCTGAGC,NexteraXT_D704,9.82,575,25.8761528327,4,5,27.3451910408,1.74,4.5849802372
 CROP-seq_Jurkat_TCR_unstimulated_r1,bsf_samples,BSF_0256_HCVGMBBXX,3,Jurkat_TCR_run3_tagB_unstimulated_S17514,,J3B,CTCTCTAC,NexteraXT_D707,8.2,575,21.6073781291,4,5,22.0092226614,1.74,4.5849802372
 CROP-seq_Jurkat_TCR_unstimulated_r2,bsf_samples,BSF_0256_HCVGMBBXX,4,Jurkat_TCR_run4_tagA_unstimulated_S17517,,J4A,TAGGCATG ,NexteraXT_D706,8.8,575,23.1884057971,4,5,23.9855072464,1.62,4.2687747036
