@@ -494,28 +494,29 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
             matrix.ix[de_genes],
             metric="correlation",
             z_score=0,
-            # robust=True
             vmin=-3, vmax=3,
             row_cluster=True, col_cluster=True,
-            yticklabels=False, xticklabels=False,
+            yticklabels=True, xticklabels=False,
             col_colors=get_level_colors(matrix.columns),
             figsize=(15, 15))
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+            item.set_fontsize(8)
         g.fig.savefig(os.path.join(results_dir, "{}.all_cells.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
 
         # Correlate all cells on DE genes
         g = sns.clustermap(
             matrix.ix[de_genes].corr(),
-            vmin=0, vmax=1, cmap="BrBG",
+            cmap="BrBG",
             metric="correlation",
             row_cluster=True, col_cluster=True,
-            yticklabels=False, xticklabels=False,
+            yticklabels=True, xticklabels=False,
             col_colors=get_level_colors(matrix.columns),
             row_colors=get_level_colors(matrix.columns),
             figsize=(15, 15))
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+            item.set_fontsize(8)
         g.fig.savefig(os.path.join(results_dir, "{}.all_cells.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
 
         # Cluster CTRL cells on DE genes
@@ -523,80 +524,77 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
             matrix[matrix.columns[matrix.columns.get_level_values('gene') == "CTRL"]].ix[de_genes],
             metric="correlation",
             z_score=0,
-            # robust=True
             vmin=-3, vmax=3,
             row_cluster=True, col_cluster=True,
-            yticklabels=False, xticklabels=False,
+            yticklabels=True, xticklabels=False,
             col_colors=get_level_colors(matrix.columns),
             figsize=(15, 15))
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
             item.set_fontsize(8)
-        g.fig.savefig(os.path.join(results_dir, "{}.control_cells.clustering.png".format(prefix)), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(results_dir, "{}.control_cells.clustering.svg".format(prefix)), bbox_inches="tight")
 
         # Correlate CTRL cells on DE genes
         g = sns.clustermap(
             matrix[matrix.columns[matrix.columns.get_level_values('gene') == "CTRL"]].ix[de_genes].corr(),
-            vmin=0, vmax=1, cmap="BrBG",
+            cmap="BrBG",
             metric="correlation",
             row_cluster=True, col_cluster=True,
-            yticklabels=False, xticklabels=False,
+            yticklabels=True, xticklabels=False,
             col_colors=get_level_colors(matrix[matrix.columns[matrix.columns.get_level_values('gene') == "CTRL"]].columns),
             row_colors=get_level_colors(matrix[matrix.columns[matrix.columns.get_level_values('gene') == "CTRL"]].columns),
             figsize=(15, 15))
         for item in g.ax_heatmap.get_yticklabels():
             item.set_rotation(0)
             item.set_fontsize(8)
-        g.fig.savefig(os.path.join(results_dir, "{}.control_cells.clustering.correlation.png".format(prefix)), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(results_dir, "{}.control_cells.clustering.correlation.svg".format(prefix)), bbox_inches="tight")
 
         # Cluster groups of targeted gRNAs/genes
         # get condition/gene mean expression for every gene
         for level in ["gene", "grna"]:
-            matrix_grna_means = matrix.T.groupby(level=["condition", level]).mean().T
+            matrix_level_means = matrix.T.groupby(level=["condition", level]).mean().T
             # grna level
             # cluster mean gene expression
             g = sns.clustermap(
-                matrix_grna_means.ix[de_genes],
+                matrix_level_means.ix[de_genes],
                 z_score=0,
                 vmin=-3, vmax=3,
-                # robust=True,
                 row_cluster=True, col_cluster=True,
                 yticklabels=False, xticklabels=True,
-                col_colors=get_level_colors(matrix_grna_means.columns),
+                col_colors=get_level_colors(matrix_level_means.columns),
                 figsize=(15, 15))
             for item in g.ax_heatmap.get_xticklabels():
                 item.set_rotation(90)
                 item.set_fontsize(8)
-            g.fig.savefig(os.path.join(results_dir, "{}.{}_level.clustering.png".format(prefix, level)), bbox_inches="tight", dpi=300)
+            g.fig.savefig(os.path.join(results_dir, "{}.{}_level.clustering.svg".format(prefix, level)), bbox_inches="tight")
 
             # order
             g = sns.clustermap(
-                matrix_grna_means.ix[de_genes],
+                matrix_level_means.ix[de_genes],
                 z_score=0,
                 vmin=-3, vmax=3,
-                # robust=True,
                 row_cluster=True, col_cluster=False,
                 yticklabels=False, xticklabels=True,
-                col_colors=get_level_colors(matrix_grna_means.columns),
+                col_colors=get_level_colors(matrix_level_means.columns),
                 figsize=(15, 15))
             for item in g.ax_heatmap.get_xticklabels():
                 item.set_rotation(90)
                 item.set_fontsize(8)
-            g.fig.savefig(os.path.join(results_dir, "{}.{}_level.ordered_heatmap.png".format(prefix, level)), bbox_inches="tight", dpi=300)
+            g.fig.savefig(os.path.join(results_dir, "{}.{}_level.ordered_heatmap.svg".format(prefix, level)), bbox_inches="tight")
 
             # correlation
             g = sns.clustermap(
-                matrix_grna_means.ix[de_genes].corr(),
-                vmin=0, vmax=1, cmap="BrBG",
+                matrix_level_means.ix[de_genes].corr(),
+                cmap="BrBG",
                 row_cluster=True, col_cluster=True,
                 yticklabels=True, xticklabels=False,
-                col_colors=get_level_colors(matrix_grna_means.columns),
-                row_colors=get_level_colors(matrix_grna_means.columns),
+                col_colors=get_level_colors(matrix_level_means.columns),
+                row_colors=get_level_colors(matrix_level_means.columns),
                 figsize=(15, 15))
             for item in g.ax_heatmap.get_yticklabels():
                 item.set_rotation(0)
                 item.set_fontsize(8)
-            g.fig.savefig(os.path.join(results_dir, "{}.{}_level.clustering.correlation.png".format(prefix, level)), bbox_inches="tight", dpi=300)
+            g.fig.savefig(os.path.join(results_dir, "{}.{}_level.clustering.correlation.svg".format(prefix, level)), bbox_inches="tight")
 
     #
 
@@ -632,24 +630,10 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     cors.to_csv(os.path.join(results_dir, "{}.{}genes.signature.all_cells.matrix_correlation.csv".format(experiment, n_genes)))
     p_values.to_csv(os.path.join(results_dir, "{}.{}genes.signature.all_cells.matrix_p_values.csv".format(experiment, n_genes)))
 
+    cors = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.all_cells.matrix_correlation.csv".format(experiment, n_genes)), index_col=range(5))
+    p_values = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.all_cells.matrix_p_values.csv".format(experiment, n_genes)), index_col=range(5))
+
     # visualize
-    # clustered
-    g = sns.clustermap(
-        cors,
-        z_score=0,
-        row_cluster=True, col_cluster=False,
-        yticklabels=False, xticklabels=False,
-        row_colors=get_level_colors(cors.index))
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.correlation_matrix.clustered.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
-
-    g = sns.clustermap(
-        -np.log10(p_values),
-        z_score=0,
-        row_cluster=True, col_cluster=False,
-        yticklabels=False, xticklabels=False,
-        row_colors=get_level_colors(p_values.index))
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.pvalue_matrix.clustered.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
-
     # sorted by max
     sigs = cors.apply(lambda x: np.argmax(x), axis=1).sort_values()
 
@@ -659,7 +643,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         row_cluster=False, col_cluster=False,
         yticklabels=False, xticklabels=False,
         row_colors=get_level_colors(cors.ix[sigs.index].index))
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.correlation_matrix.sorted.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.correlation_matrix.sorted.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
 
     g = sns.clustermap(
         -np.log10(p_values).ix[sigs.index],
@@ -667,24 +651,13 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         row_cluster=False, col_cluster=False,
         yticklabels=False, xticklabels=False,
         row_colors=get_level_colors(p_values.ix[sigs.index].index))
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.pvalue_matrix.sorted.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.pvalue_matrix.sorted.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
 
     for level in ['grna', 'gene']:
         c = cors.groupby(level=['condition', level]).mean()
         cs = c.apply(lambda x: np.argmax(x), axis=1).sort_values()
 
         p = p_values.groupby(level=['condition', level])
-
-        g = sns.clustermap(
-            c,
-            z_score=0,
-            row_cluster=True, col_cluster=False,
-            yticklabels=True, xticklabels=False,
-            row_colors=get_level_colors(c.index))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-            item.set_fontsize(8)
-        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.correlation_matrix.clustered.{}.png".format(experiment, n_genes, level)), dpi=300, bbox_inches="tight")
 
         g = sns.clustermap(
             c.ix[cs.index],
@@ -695,7 +668,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         for item in g.ax_heatmap.get_yticklabels():
             item.set_rotation(0)
             item.set_fontsize(8)
-        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.matrix_pvalue_matrix.sorted.{}.png".format(experiment, n_genes, level)), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.matrix_pvalue_matrix.sorted.{}.svg".format(experiment, n_genes, level)), bbox_inches="tight")
 
     # 3b. get background of signature correlations/positions
     if data_type == "CROP":
@@ -726,23 +699,6 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     # visualize
     i = np.random.choice(range(len(random_cors.index)), 5000)
 
-    # clustered
-    g = sns.clustermap(
-        random_cors.iloc[i],
-        z_score=0,
-        row_cluster=True, col_cluster=False,
-        yticklabels=False, xticklabels=False,
-        row_colors=get_level_colors(random_cors.iloc[i].index))
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.random_cells.correlation_matrix.clustered.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
-
-    g = sns.clustermap(
-        -np.log10(random_p_values.iloc[i]),
-        z_score=0,
-        row_cluster=True, col_cluster=False,
-        yticklabels=False, xticklabels=False,
-        row_colors=get_level_colors(random_p_values.iloc[i].index))
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.random_cells.pvalue_matrix.clustered.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
-
     # sorted by max
     random_sigs = random_cors.iloc[i].apply(lambda x: np.argmax(x), axis=1).sort_values()
 
@@ -767,17 +723,6 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         cs = c.apply(lambda x: np.argmax(x), axis=1).sort_values()
 
         p = random_p_values.groupby(level=['condition', level])
-
-        g = sns.clustermap(
-            c,
-            z_score=0,
-            row_cluster=True, col_cluster=False,
-            yticklabels=True, xticklabels=False,
-            row_colors=get_level_colors(c.index))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-            item.set_fontsize(8)
-        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.random_cells.correlation_matrix.clustered.{}.png".format(experiment, n_genes, level)), dpi=300, bbox_inches="tight")
 
         g = sns.clustermap(
             c.ix[cs.index],
@@ -814,31 +759,10 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
     bulk_cors.to_csv(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_correlation.csv".format(experiment, n_genes)))
     bulk_p_values.to_csv(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_p_values.csv".format(experiment, n_genes)))
+    bulk_cors = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_correlation.csv".format(experiment, n_genes)), index_col=range(4))
+    bulk_p_values = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_p_values.csv".format(experiment, n_genes)), index_col=range(4))
 
     # visualize
-    # clustered
-    g = sns.clustermap(
-        bulk_cors,
-        z_score=0,
-        row_cluster=True, col_cluster=False,
-        yticklabels=True, xticklabels=False,
-        row_colors=get_level_colors(bulk_cors.index))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-        item.set_fontsize(8)
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.correlation_matrix.clustered.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
-
-    g = sns.clustermap(
-        -np.log10(bulk_p_values),
-        z_score=0,
-        row_cluster=True, col_cluster=False,
-        yticklabels=True, xticklabels=False,
-        row_colors=get_level_colors(bulk_p_values.index))
-    for item in g.ax_heatmap.get_yticklabels():
-        item.set_rotation(0)
-        item.set_fontsize(8)
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.pvalue_matrix.clustered.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
-
     # sorted by max
     sigs = bulk_cors.apply(lambda x: np.argmax(x), axis=1).sort_values()
 
@@ -851,7 +775,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
         item.set_fontsize(8)
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.correlation_matrix.sorted.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.correlation_matrix.sorted.svg".format(experiment, n_genes)), bbox_inches="tight")
 
     g = sns.clustermap(
         -np.log10(bulk_p_values).ix[sigs.index],
@@ -862,24 +786,13 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     for item in g.ax_heatmap.get_yticklabels():
         item.set_rotation(0)
         item.set_fontsize(8)
-    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.pvalue_matrix.sorted.png".format(experiment, n_genes)), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.pvalue_matrix.sorted.svg".format(experiment, n_genes)), bbox_inches="tight")
 
     for level in ['grna', 'gene']:
         c = bulk_cors.groupby(level=['condition', level]).mean()
         cs = c.apply(lambda x: np.argmax(x), axis=1).sort_values()
 
         p = bulk_p_values.groupby(level=['condition', level])
-
-        g = sns.clustermap(
-            c,
-            z_score=0,
-            row_cluster=True, col_cluster=False,
-            yticklabels=True, xticklabels=False,
-            row_colors=get_level_colors(c.index))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-            item.set_fontsize(8)
-        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.correlation_matrix.clustered.{}.png".format(experiment, n_genes, level)), dpi=300, bbox_inches="tight")
 
         g = sns.clustermap(
             c.ix[cs.index],
@@ -890,7 +803,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         for item in g.ax_heatmap.get_yticklabels():
             item.set_rotation(0)
             item.set_fontsize(8)
-        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_pvalue_matrix.sorted.{}.png".format(experiment, n_genes, level)), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_pvalue_matrix.sorted.{}.svg".format(experiment, n_genes, level)), bbox_inches="tight")
 
     # # Try quadratic programming
     # fits_raw = list()
@@ -1022,90 +935,27 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         # Make heatmap sorted by median signature position per knockout
 
         # Group by stimulation / gRNA, get mean expression
-        mean_matrix = matrix.ix[de_genes].dropna().T.groupby(level=['condition', 'gene']).mean()
+        for level in ["gene", "grna"]:
+            level_matrix = matrix.ix[de_genes].dropna().T.groupby(level=['condition', level]).mean()
 
-        # cluster
-        g = sns.clustermap(
-            mean_matrix.T, z_score=0,
-            col_colors=get_level_colors(mean_matrix.index),
-            metric='correlation',
-            row_cluster=True, col_cluster=True,
-            xticklabels=True, yticklabels=True,
-            figsize=(15, 15))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
-        g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.gene_group_means.clustered.png".format(experiment, n_genes, data_type)), bbox_inches="tight", dpi=300)
-        # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.group_means.clustered.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        # cluster groups, sort genes
-        g = sns.clustermap(
-            mean_matrix.ix[sigs_mean.sort_values("signature").index].T, z_score=0,
-            col_colors=get_level_colors(mean_matrix.ix[sigs_mean.sort_values("signature").index].index),
-            metric='correlation',
-            row_cluster=False, col_cluster=True,
-            xticklabels=True, yticklabels=True,
-            figsize=(15, 15))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
-        g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.gene_group_means.sorted_genes_clustered_groups.png".format(experiment, n_genes, data_type)), bbox_inches="tight", dpi=300)
-
-        # sort by signature
-        clust = sns.clustermap(
-            mean_matrix.ix[sigs_mean.sort_values("signature").index], z_score=1,
-            row_colors=get_level_colors(sigs_mean.sort_values("signature").index),
-            metric='correlation',
-            row_cluster=False, col_cluster=True,
-            xticklabels=True, yticklabels=True,
-            figsize=(8.62948158106742, 6))
-        for item in clust.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-        for item in clust.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
-        clust.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.gene_group_means.sorted_signature.png".format(experiment, n_genes, data_type)), bbox_inches="tight", dpi=300)
-        clust.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.gene_group_means.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        # Strip plot of number of cells
-        p = sigs_mean.sort_values("signature")
-
-        fig, axis = plt.subplots(1, figsize=(8, 8))
-        axis.scatter([1] * p.shape[0], range(p.shape[0]), s=p['n_cells'])
-        [axis.text(1.0005, k, s=str(int(x))) for k, x in enumerate(p['n_cells'].values)]
-        [axis.text(1.01, k, s=str(x)) for k, x in enumerate(p.index.get_level_values('condition'))]
-        [axis.text(1.02, k, s=str(x)) for k, x in enumerate(p.index.get_level_values('gene'))]
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.cells_per_group.bubbles.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        # Stripe with relative change
-        fig, axis = plt.subplots(1, figsize=(8, 8))
-        sns.heatmap(p[["log_fold_change"]], ax=axis)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.cells_per_group.stripe.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        # Barplots of difference compared with CTRL
-        for metric in ["abs_change", "log_fold_change"]:
-            fig, axis = plt.subplots(1, figsize=(4, 4))
-            sns.barplot(sigs_mean[metric], sigs_mean[metric].index, orient="horiz", order=sigs_mean[metric].index, ax=axis)
-            axis.set_xlabel("Signature deviation from control (propensity to cause stimulation)")
-            sns.despine(fig)
-            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.mean_group_signature_deviation.{}.barplot.svg".format(experiment, n_genes, data_type, metric)), bbox_inches="tight")
-
-        if data_type == "CROP":
-            # Single-cell matrix sorted in same way as above
-            signature_dict = sigs_mean.sort_values("signature")['signature'].to_dict()
-
-            df2 = df.copy().T
-            df2.index = df2.index.droplevel(['cell', 'replicate', 'grna'])
-            df2['sortby'] = df2.index.to_series().map(signature_dict).tolist()
-            df2 = df2.reset_index().sort_values(["sortby", "condition", "gene"]).drop(['sortby'], axis=1).set_index(['condition', 'gene']).T
-
-            # sort by signature
+            # cluster
             g = sns.clustermap(
-                df2.ix[de_genes].T,
-                z_score=1, vmin=-1.5, vmax=1.5,
-                row_colors=get_level_colors(df2.columns),
+                level_matrix.T, z_score=0,
+                col_colors=get_level_colors(level_matrix.index),
+                metric='correlation',
+                row_cluster=True, col_cluster=True,
+                xticklabels=True, yticklabels=True,
+                figsize=(15, 15))
+            for item in g.ax_heatmap.get_yticklabels():
+                item.set_rotation(0)
+            for item in g.ax_heatmap.get_xticklabels():
+                item.set_rotation(90)
+            g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.{}_group_means.clustered.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # cluster groups, sort genes
+            g = sns.clustermap(
+                level_matrix.ix[sigs_mean.sort_values("signature").index].T, z_score=0,
+                col_colors=get_level_colors(level_matrix.ix[sigs_mean.sort_values("signature").index].index),
                 metric='correlation',
                 row_cluster=False, col_cluster=True,
                 xticklabels=True, yticklabels=True,
@@ -1114,8 +964,70 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
                 item.set_rotation(0)
             for item in g.ax_heatmap.get_xticklabels():
                 item.set_rotation(90)
-            g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.png".format(experiment, n_genes, data_type)), bbox_inches="tight", dpi=300)
-            # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+            g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.{}_group_means.sorted_genes_clustered_groups.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # sort by signature
+            clust = sns.clustermap(
+                level_matrix.ix[sigs_mean.sort_values("signature").index], z_score=1,
+                row_colors=get_level_colors(sigs_mean.sort_values("signature").index),
+                metric='correlation',
+                row_cluster=False, col_cluster=True,
+                xticklabels=True, yticklabels=True,
+                figsize=(6, 8.62948158106742))
+            for item in clust.ax_heatmap.get_yticklabels():
+                item.set_rotation(0)
+            for item in clust.ax_heatmap.get_xticklabels():
+                item.set_rotation(90)
+            clust.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.{}_group_means.sorted_signature.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # Strip plot of number of cells
+            p = sigs_mean.sort_values("signature")
+
+            fig, axis = plt.subplots(1, figsize=(8, 8))
+            axis.scatter([1] * p.shape[0], range(p.shape[0]), s=p['n_cells'])
+            [axis.text(1.0005, k, s=str(int(x))) for k, x in enumerate(p['n_cells'].values)]
+            [axis.text(1.01, k, s=str(x)) for k, x in enumerate(p.index.get_level_values('condition'))]
+            [axis.text(1.02, k, s=str(x)) for k, x in enumerate(p.index.get_level_values(level))]
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.{}_level.cells_per_group.bubbles.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # Stripe with relative change
+            fig, axis = plt.subplots(1, figsize=(8, 8))
+            sns.heatmap(p[["log_fold_change"]], ax=axis)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.{}_level.cells_per_group.stripe.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # Barplots of difference compared with CTRL
+            for metric in ["abs_change", "log_fold_change"]:
+                fig, axis = plt.subplots(1, figsize=(4, 4))
+                sns.barplot(sigs_mean[metric], sigs_mean[metric].index, orient="horiz", order=sigs_mean[metric].index, ax=axis)
+                axis.set_xlabel("Signature deviation from control (propensity to cause stimulation)")
+                sns.despine(fig)
+                fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.{}_mean_group_signature_deviation.{}.barplot.svg".format(experiment, n_genes, data_type, level, metric)), bbox_inches="tight")
+
+            if data_type == "CROP":
+                # Single-cell matrix sorted in same way as above
+                signature_dict = sigs_mean.sort_values("signature")['signature'].to_dict()
+
+                df2 = df.copy().T
+                df2.index = df2.index.droplevel(['cell', 'replicate', 'grna'])
+                df2['sortby'] = df2.index.to_series().map(signature_dict).tolist()
+                df2 = df2.reset_index().sort_values(["sortby", "condition", level]).drop(['sortby'], axis=1).set_index(['condition', level]).T
+
+                # sort by signature
+                g = sns.clustermap(
+                    df2.ix[de_genes].T,
+                    z_score=1, vmin=-1.5, vmax=1.5,
+                    row_colors=get_level_colors(df2.columns),
+                    metric='correlation',
+                    row_cluster=False, col_cluster=True,
+                    xticklabels=True, yticklabels=True,
+                    figsize=(15, 15))
+                for item in g.ax_heatmap.get_yticklabels():
+                    item.set_rotation(0)
+                for item in g.ax_heatmap.get_xticklabels():
+                    item.set_rotation(90)
+                g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.png".format(experiment, n_genes, data_type)), bbox_inches="tight", dpi=300)
+                # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
 
     #
 
@@ -1443,66 +1355,6 @@ def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500,
         g.fig.savefig(os.path.join(
             results_dir,
             "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.enrichr.{}.p_value.pdf".format(gene_set_library)), bbox_inches="tight")
-
-
-def plot_genes(exp):
-    """
-    """
-    genes = {
-        "Cytokines/effector molecules": ["IL2", "TNF", "LTA", "LTB", "GZMB", "IL3", "IL6"],
-        "Surface": ["CXCL8", "IL2RA", "CD40LG", "CXCR4", "CD69", "CD83", "TNFRSF4"],
-        "maybe chemokines": ["IL8", "CCL4", "CCL3", "CCL2", "CCL1"],
-        "other": ["DUSP2", "DUSP5", "VGF", "CSF2", "BIRC3"],
-    }
-    # matrices
-    # raw group counts
-    exp2 = exp.to_dense().ix[[y for x in genes.values() for y in x]].dropna().T
-
-    cell_names = exp2.index.str.lstrip("sti:|unsti:")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    exp2['ass'] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=exp2.index).astype("category")
-    exp2["sti"] = pd.Series([x[:2] for x in exp2.index], index=exp2.index).astype("category")
-    exp_groups = exp2.groupby(['sti', 'ass']).mean().T
-    # Filter out genes with less than 10 cells and save
-    c = exp2.groupby(['sti', 'ass']).apply(len)
-    exp_groups = exp_groups[c[c >= 10].index]
-    exp_groups.to_csv(os.path.join(results_dir, "raw_expression.{}.group_means.csv".format(prefix)), index=True)
-
-    # norm counts
-    norm = matrix_norm.to_dense()
-    # norm group means
-    norm2 = norm.ix[[y for x in genes.values() for y in x]].dropna().T
-
-    cell_names = norm2.index.str.lstrip("un|st")
-    ass = pd.Series([assignment[assignment["cell"] == y]["group"].squeeze() for y in cell_names])
-    norm2['ass'] = pd.Series([x if type(x) == str else "Unassigned" for x in ass], index=norm2.index).astype("category")
-    norm2["sti"] = pd.Series([x[:2] for x in norm2.index], index=norm2.index).astype("category")
-    norm_groups = norm2.groupby(['sti', 'ass']).mean().T
-    # Filter out genes with less than 10 cells and save
-    c = norm2.groupby(['sti', 'ass']).apply(len)
-    norm_groups = norm_groups[c[c >= 10].index]
-    norm_groups.to_csv(os.path.join(results_dir, "norm_expression.{}.group_means.csv".format(prefix)), index=True)
-
-    # filter for groups with more than n cells
-    c = df2.groupby(["sti", "ass"]).apply(len)
-    group_means = group_means[c[c >= np.percentile(c, 5)].index]
-
-    for m, name in [
-            (exp_groups, "exp_groups"), (norm_groups, "norm_groups"),  # groups of cells
-            # (exp, "counts"), (df, "norm")  # all cells
-            ]:
-        # take top N covered cells
-        g = sns.clustermap(
-            m,
-            metric="correlation",
-            z_score=0)
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
-        g.fig.savefig(os.path.join(
-            results_dir,
-            "gene_expression.500genes.{}.{}.clustermap.svg".format(prefix, name)), bbox_inches="tight")
 
 
 def classify_unassigned(df, assignment, prefix=""):
@@ -2310,9 +2162,59 @@ def flow_analysis():
     """
     from FlowCytometryTools import FCMeasurement
     from FlowCytometryTools import ThresholdGate, PolyGate
-    from scipy.stats import pearsonr
+    from scipy.stats import pearsonr, spearmanr
 
     flow = pd.read_csv(os.path.join("metadata", "flow_analysis.csv"))
+    flow = flow[flow["failed"] != True]
+
+    #
+
+    # Plot pregated mean of positive cells vs marker gene expression per gRNA
+    marker_gene_mapping = {
+        "CD38": "CD38", "CD69": "CD69", "PD1": "PDCD1", "pRelA": "RELA", "CD154": "CD40LG", "CD25": "IL2RA", "CD82": "CD82"
+    }
+    df_t = df.T
+
+    # Each marker separately, both conditions together
+    condition_dict = dict(zip(flow['condition'].drop_duplicates().tolist()[::-1], sns.color_palette("colorblind") * 10))
+
+    for marker in marker_gene_mapping.keys():
+        for level in ["gene", "grna"]:
+            for metric in ["%+cells", "gMFI"]:
+                fig, axis = plt.subplots(1, 1, sharex=False, sharey=False, figsize=(1 * 4, 1 * 4))
+
+                facs_means = dict()
+                scRNA_means = dict()
+                for i, condition in enumerate(flow['condition'].drop_duplicates()):
+                    for level_value in flow[flow['condition'] == condition][level].drop_duplicates():
+                        if metric == "%+cells":
+                            facs_mean = flow[(flow['condition'] == condition) & (flow[level] == level_value)]["%{}+".format(marker)].squeeze().mean()
+                        else:
+                            facs_mean = flow[(flow['condition'] == condition) & (flow[level] == level_value)]["{} gMFI".format(marker)].squeeze().mean()
+                        if (level == "grna") and (~level_value.startswith("CTRL")):
+                            level_value = "Tcrlibrary_" + level_value
+                        scRNA_mean = df_t.ix[
+                            df_t.index[
+                                (df_t.index.get_level_values("condition") == condition) &
+                                (df_t.index.get_level_values(level) == level_value)
+                            ]][marker_gene_mapping[marker]].mean()
+                        if pd.isnull(facs_mean) or pd.isnull(scRNA_mean):
+                            continue
+
+                        axis.scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=condition_dict[condition])
+                        axis.text(scRNA_mean, facs_mean, level_value)
+                        facs_means[(condition, level_value)] = facs_mean
+                        scRNA_means[(condition, level_value)] = scRNA_mean
+                    axis.set_title("{}".format(marker))
+                    axis.set_xlabel("{} expression log2(1 + TPM)".format(marker))
+                    axis.set_ylabel("% cells expressing {} (FACS)".format(marker))
+                if (len(scRNA_means) == 0) or (len(facs_means) == 0):
+                    continue
+                p, _ = pearsonr(scRNA_means.values(), facs_means.values())
+                s, _ = spearmanr(scRNA_means.values(), facs_means.values())
+                axis.text(max(scRNA_means.values()), min(facs_means.values()), "Pearson = {0:0.3f}\nSpearman = {1:0.3f}".format(p, s))
+                sns.despine(fig)
+                fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.{}.{}_only.both_conditions.{}.svg".format(level, marker, metric)), bbox_inches="tight")
 
     # parse fcs files,
     # gate on single, live cells
@@ -2382,146 +2284,6 @@ def flow_analysis():
     fig0.savefig(os.path.join("results", "flow", "flow.all_samples.FSCA_SSCA.png"), bbox_inches="tight", dpi=300)
     fig1.savefig(os.path.join("results", "flow", "flow.all_samples.FSCA_FSCH.png"), bbox_inches="tight", dpi=300)
     fig2.savefig(os.path.join("results", "flow", "flow.all_samples.FSCA_LD.png"), bbox_inches="tight", dpi=300)
-
-    #
-
-    # Plot pregated mean of positive cells vs marker gene expression per gRNA
-    marker_gene_mapping = {
-        "CD38": "CD38", "CD69": "CD69", "PD1": "PDCD1", "pRelA": "RELA", "CD154": "CD40LG", "CD25": "IL2RA"
-    }
-    df_t = df.T
-
-    fig, axis = plt.subplots(
-        len(flow['condition'].drop_duplicates()), len(marker_gene_mapping.keys()), sharex=False, sharey=False,
-        figsize=(
-            len(marker_gene_mapping.keys()) * 4,
-            len(flow['condition'].drop_duplicates()) * 4))
-
-    gene_colors = dict(zip(flow['gene'].drop_duplicates(), sns.color_palette("colorblind") * 10))
-    cm = plt.get_cmap('gist_rainbow')
-    gene_colors = dict(zip(flow['gene'].drop_duplicates(), [cm(1. * i / len(flow['gene'].drop_duplicates())) for i in range(len(flow['gene'].drop_duplicates()))]))
-    for i, condition in enumerate(flow['condition'].drop_duplicates()):
-        for j, marker in enumerate(marker_gene_mapping.keys()):
-            facs_means = dict()
-            scRNA_means = dict()
-            for grna in flow[flow['condition'] == condition]['grna'].drop_duplicates():
-                gene = (flow.loc[(flow['condition'] == condition) & (flow['grna'] == grna), "gene"]).squeeze()
-                facs_mean = flow[(flow['condition'] == condition) & (flow['grna'] == grna)]["%{}+".format(marker)].squeeze()
-                scRNA_mean = df_t.ix[
-                    df_t.index[
-                        (df_t.index.get_level_values("condition") == condition) &
-                        (df_t.index.get_level_values("grna") == ("Tcrlibrary_" + grna if not grna.startswith("CTRL") else grna))
-                    ]][marker_gene_mapping[marker]].mean()
-
-                axis[i][j].scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=gene_colors[gene])
-                axis[i][j].set_title("{} {}".format(condition, marker))
-
-                facs_means[grna] = facs_mean
-                scRNA_means[grna] = scRNA_mean
-
-            c, p = pearsonr(scRNA_means.values(), facs_means.values())
-            axis[i][j].text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
-    sns.despine(fig)
-    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.grna.svg"), bbox_inches="tight")
-
-    # Only CD69
-    fig, axis = plt.subplots(
-        len(flow['condition'].drop_duplicates()), 1, sharex=False, sharey=False,
-        figsize=(
-            1 * 4,
-            len(flow['condition'].drop_duplicates()) * 4))
-
-    gene_colors = dict(zip(flow['gene'].drop_duplicates(), sns.color_palette("colorblind") * 10))
-    cm = plt.get_cmap('gist_rainbow')
-    gene_colors = dict(zip(flow['gene'].drop_duplicates(), [cm(1. * i / len(flow['gene'].drop_duplicates())) for i in range(len(flow['gene'].drop_duplicates()))]))
-    for i, condition in enumerate(flow['condition'].drop_duplicates()):
-        for j, marker in enumerate(marker_gene_mapping.keys()):
-            if marker != "CD69":
-                continue
-            facs_means = dict()
-            scRNA_means = dict()
-            for grna in flow[flow['condition'] == condition]['grna'].drop_duplicates():
-                gene = (flow.loc[(flow['condition'] == condition) & (flow['grna'] == grna), "gene"]).squeeze()
-                facs_mean = flow[(flow['condition'] == condition) & (flow['grna'] == grna)]["%{}+".format(marker)].squeeze()
-                scRNA_mean = df_t.ix[
-                    df_t.index[
-                        (df_t.index.get_level_values("condition") == condition) &
-                        (df_t.index.get_level_values("grna") == ("Tcrlibrary_" + grna if not grna.startswith("CTRL") else grna))
-                    ]][marker_gene_mapping[marker]].mean()
-
-                axis[i].scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=gene_colors[gene])
-                axis[i].text(scRNA_mean, facs_mean, grna)
-                axis[i].set_title("{} {}".format(condition, marker))
-
-                facs_means[grna] = facs_mean
-                scRNA_means[grna] = scRNA_mean
-
-            c, p = pearsonr(scRNA_means.values(), facs_means.values())
-            axis[i].text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
-    sns.despine(fig)
-    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.grna.CD69_only.svg"), bbox_inches="tight")
-
-    # Only CD69, both conditions together
-    fig, axis = plt.subplots(1, 1, sharex=False, sharey=False, figsize=(1 * 4, 1 * 4))
-
-    condition_dict = dict(zip(flow['condition'].drop_duplicates(), sns.color_palette("colorblind") * 10))
-    facs_means = dict()
-    scRNA_means = dict()
-    for i, condition in enumerate(flow['condition'].drop_duplicates()):
-        for j, marker in enumerate(marker_gene_mapping.keys()):
-            if marker != "CD69":
-                continue
-            for gene in flow[flow['condition'] == condition]['gene'].drop_duplicates():
-                facs_mean = flow[(flow['condition'] == condition) & (flow['gene'] == gene)]["%{}+".format(marker)].squeeze().mean()
-                scRNA_mean = df_t.ix[
-                    df_t.index[
-                        (df_t.index.get_level_values("condition") == condition) &
-                        (df_t.index.get_level_values("gene") == gene)
-                    ]][marker_gene_mapping[marker]].mean()
-
-                axis.scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=condition_dict[condition])
-                axis.text(scRNA_mean, facs_mean, gene)
-                axis.set_title("{} {}".format(condition, marker))
-                facs_means[gene] = facs_mean
-                scRNA_means[gene] = scRNA_mean
-    c, p = pearsonr(scRNA_means.values(), facs_means.values())
-    axis.text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
-    sns.despine(fig)
-    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.gene.CD69_only.both_conditions.svg"), bbox_inches="tight")
-
-    # Plot pregated mean of positive cells vs marker gene expression per gene
-    fig, axis = plt.subplots(
-        len(flow['condition'].drop_duplicates()), len(marker_gene_mapping.keys()), sharex=False, sharey=False,
-        figsize=(
-            len(marker_gene_mapping.keys()) * 4,
-            len(flow['condition'].drop_duplicates()) * 4))
-
-    gene_colors = dict(zip(flow['gene'].drop_duplicates(), sns.color_palette("colorblind") * 10))
-    cm = plt.get_cmap('gist_rainbow')
-    gene_colors = dict(zip(flow['gene'].drop_duplicates(), [cm(1. * i / len(flow['gene'].drop_duplicates())) for i in range(len(flow['gene'].drop_duplicates()))]))
-    for i, condition in enumerate(flow['condition'].drop_duplicates()):
-        for j, marker in enumerate(marker_gene_mapping.keys()):
-            facs_means = dict()
-            scRNA_means = dict()
-            for gene in flow[flow['condition'] == condition]['gene'].drop_duplicates():
-                facs_mean = flow[(flow['condition'] == condition) & (flow['gene'] == gene)]["%{}+".format(marker)].squeeze().mean()
-                scRNA_mean = df_t.ix[
-                    df_t.index[
-                        (df_t.index.get_level_values("condition") == condition) &
-                        (df_t.index.get_level_values("gene") == gene)
-                    ]][marker_gene_mapping[marker]].mean()
-
-                axis[i][j].scatter(scRNA_mean, facs_mean, s=10, alpha=0.7, color=gene_colors[gene])
-                axis[i][j].set_title("{} {}".format(condition, marker))
-
-                facs_means[gene] = facs_mean
-                scRNA_means[gene] = scRNA_mean
-
-            c, p = pearsonr(scRNA_means.values(), facs_means.values())
-            axis[i][j].text(max(scRNA_means.values()), max(facs_means.values()), "r = {0:0.3f}\np = {1:0.3f}".format(c, p))
-    sns.despine(fig)
-    fig.savefig(os.path.join("results", "flow", "flow.all_samples.mean_flow_mean_scRNA.gene.svg"), bbox_inches="tight")
-
 
 
 prj = Project(os.path.join("metadata", "config.yaml"))
