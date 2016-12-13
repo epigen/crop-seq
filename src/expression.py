@@ -242,6 +242,23 @@ def unsupervised(df, experiment="", filter_low=True):
 
         fig.savefig(os.path.join(results_dir, "{}.clustering.{}.png".format(experiment, group)), bbox_inches="tight", dpi=300)
 
+    # TSNE-specific
+    # get top 25% covered cells CTRL
+    df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
+
+    df2 = df[df.sum().sort_values().tail(int(df.shape[1] * 0.25)).index]
+    df2 = df2[df2.columns[df2.columns.get_level_values("gene") == "CTRL"]]
+
+    # make PCA on them
+    pca_matrix = PCA().fit_transform(df2.T)
+    fitted = TSNE(n_components=2, init=pca_matrix[:, :2], early_exaggeration=6.0, metric="correlation", verbose=2).fit_transform(df.T)
+
+    # color mapping
+    integer_map = dict(zip(df.columns.levels[level_mapping[level]], sns.color_palette("colorblind") * int(1e5)))
+    colors = [integer_map[x] for x in df.columns.get_level_values(level)]
+
+    plt.scatter(fitted[:, 0], fitted[:, 1], color=colors, alpha=0.4)
+
 
 def get_level_colors(index):
     pallete = sns.color_palette("colorblind") * int(1e6)
@@ -321,6 +338,15 @@ def differential_genes(df, experiment, method="pca"):
         g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.{}_level.png".format(experiment, n_genes, level)), bbox_inches="tight", dpi=300)
         g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.{}_level.svg".format(experiment, n_genes, level)), bbox_inches="tight")
 
+        # All genes
+        fig, axis = plt.subplots(1)
+        sns.distplot(np.log2(1 + abs(diff)), kde=False)
+        axis.set_ylabel("Genes")
+        axis.set_xlabel("PC contribution")
+        sns.despine(fig)
+        fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.all_PC_contribution.svg".format(experiment, n_genes, level)), bbox_inches="tight")
+
+        # Significant ones
         s = diff[abs(diff) > np.percentile(abs(diff), percentile)]
         fig, axis = plt.subplots(1)
         sns.barplot(s, s.index, orient="horiz")
@@ -892,92 +918,113 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         sigs = pd.merge(sigs.reset_index(), s.reset_index()).set_index(index)
 
         # get minimum correlation
-        m = cors.min(axis=1)
-        m.name = "min_corr"
-        sigs = pd.merge(sigs.reset_index(), m.reset_index()).set_index(index)
-
-        # get mean correlation
-        m = cors.mean(axis=1)
-        m.name = "mean_corr"
-        sigs = pd.merge(sigs.reset_index(), m.reset_index()).set_index(index)
+        mean = np.mean
+        for metric in ["min", "mean", "max"]:
+            m = cors.apply(eval(metric), axis=1)
+            m.name = "{}_corr".format(metric)
+            sigs = pd.merge(sigs.reset_index(), m.reset_index()).set_index(index)
 
         # save
         sigs.to_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.all_cells.correlation.csv".format(experiment, n_genes, data_type)))
         sigs = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.all_cells.correlation.csv".format(experiment, n_genes, data_type))).set_index(index)
 
+        # Plot heatmaps of metrics per cell sorted by signature (to match the correlation matrices per cell)
+        for metric in ["residual", "min_corr", "mean_corr", "max_corr"]:
+            print(metric)
+            fig, axis = plt.subplots(1, figsize=(2, 12))
+            sns.heatmap(sigs.sort_values("signature")[[metric]], ax=axis, cmap="inferno", xticklabels=False, yticklabels=False, vmin=0, vmax=1)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.{}.heatmap_strip.png".format(experiment, n_genes, data_type, metric)), bbox_inches="tight", dpi=300)
+        metric = "reads_per_cell"
+        fig, axis = plt.subplots(1, figsize=(2, 12))
+        sns.heatmap(np.log10(sigs.sort_values("signature")[[metric]]), ax=axis, cmap="inferno", xticklabels=False, yticklabels=False)
+        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.{}.heatmap_strip.png".format(experiment, n_genes, data_type, metric)), bbox_inches="tight", dpi=300)
+
         # pairwise variable distribution
         g = sns.pairplot(sigs.reset_index(), vars=sigs.columns, hue="condition")
         g.fig.savefig(os.path.join(results_dir, "{}.{}genes.signature.{}.all_metrics.pairwise_distributions.png".format(experiment, n_genes, data_type)), bbox_inches="tight", dpi=300)
 
-        # annotate KO genes with signature
-        sigs_mean = sigs.groupby(level=['condition', 'gene']).mean()
-        sigs_mean["n_cells"] = sigs.groupby(level=['condition', 'gene']).apply(len)
-
-        # add distance from CTRL
-        for cond in [cond1, cond2]:
-            ko = sigs_mean.loc[sigs_mean.index.get_level_values('condition') == cond, "signature"]
-            ctrl = sigs_mean.loc[(sigs_mean.index.get_level_values('condition') == cond) & (sigs_mean.index.get_level_values('gene') == "CTRL"), "signature"]
-            sigs_mean.loc[sigs_mean.index.get_level_values('condition') == cond, "abs_change"] = ko - ctrl.squeeze()
-            sigs_mean.loc[sigs_mean.index.get_level_values('condition') == cond, "log_fold_change"] = np.log2(ko / ctrl.squeeze())
-
-        # save
-        sigs_mean = sigs_mean.sort_index(level='condition')
-        sigs_mean = sigs_mean.sort_values(['signature'])
-        sigs_mean.to_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.group_means.annotated.csv".format(experiment, n_genes, data_type)), index=True)
-        sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.group_means.annotated.csv".format(experiment, n_genes, data_type)), index_col=[0, 1])
-
-        #
-
-        # Filter out genes with less than n of cells
-        if data_type == "CROP":
-            sigs_mean = sigs_mean[sigs_mean["n_cells"] >= 10]
-
-        fig, axis = plt.subplots(1, figsize=(10, 8))
-        sns.stripplot(x=sigs_mean['signature'], y=sigs_mean.index, orient="horiz", ax=axis)
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_group_signature.strip.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        # Given the known condition of each group, what is the deviation from that?
-        # plot as rank of mean
-        fig, axis = plt.subplots(1, figsize=(10, 8))
-        axis.scatter(sigs_mean['signature'].rank(ascending=False), sigs_mean['signature'])
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_group_signature.rank.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        # plot as violinplots (values per cell)
-        p = sigs.reset_index().sort_values(['signature'])
-
-        fig, axis = plt.subplots(1, figsize=(16, 8))
-        sns.violinplot(
-            x="condition", y="signature", hue="gene",
-            data=p,
-            cut=0,
-            order=[cond1, cond2],
-            hue_order=sigs_mean.reset_index().sort_values(["signature"], ascending=False)['gene'].drop_duplicates(),
-            ax=axis)
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_group_signature.violinplot.sorted_st.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        fig, axis = plt.subplots(1, figsize=(16, 8))
-        sns.violinplot(
-            x="condition", y="signature", hue="gene",
-            data=p,
-            cut=0,
-            order=[cond1, cond2],
-            hue_order=sigs_mean.reset_index().sort_values(["signature"])["gene"].drop_duplicates(),
-            ax=axis)
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_group_signature.violinplot.sorted_un.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        fig, axis = plt.subplots(1, figsize=(16, 8))
-        sns.violinplot(x="gene", y="signature", hue="condition", cut=0, data=sigs.reset_index(), ax=axis)
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_group_signature.violinplot2.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-        # Make heatmap sorted by median signature position per knockout
-
-        # Group by stimulation / gRNA, get mean expression
+        # annotate KO genes with signature at both levels
         for level in ["gene", "grna"]:
+            sigs_mean = sigs.astype(float).groupby(level=['condition', level]).mean()
+            sigs_mean["n_cells"] = sigs.groupby(level=['condition', level]).apply(len)
+
+            sigs_mean['signature'] = sigs_mean['signature'].replace(0, 1)  # to avoid -inf fold changes, could be done differently too
+
+            # Plot heatmaps of metrics per cell sorted by signature (to match the correlation matrices per cell)
+            for metric in ["residual", "min_corr", "mean_corr", "max_corr"]:
+                print(metric)
+                fig, axis = plt.subplots(1, figsize=(2, 12))
+                sns.heatmap(sigs_mean.sort_values("signature")[[metric]], ax=axis, cmap="inferno", xticklabels=False, yticklabels=False, vmin=0, vmax=1)
+                fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.{}.{}.heatmap_strip.png".format(experiment, n_genes, data_type, level, metric)), bbox_inches="tight", dpi=300)
+            metric = "reads_per_cell"
+            fig, axis = plt.subplots(1, figsize=(2, 12))
+            sns.heatmap(np.log10(sigs_mean.sort_values("signature")[[metric]]), ax=axis, cmap="inferno", xticklabels=False, yticklabels=False)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.{}.{}.heatmap_strip.png".format(experiment, n_genes, data_type, level, metric)), bbox_inches="tight", dpi=300)
+
+            # add distance from CTRL
+            for cond in [cond1, cond2]:
+                ko = sigs_mean.loc[sigs_mean.index.get_level_values('condition') == cond, "signature"]
+                ctrl = sigs_mean.loc[(sigs_mean.index.get_level_values('condition') == cond) & (sigs_mean.index.get_level_values(level).str.contains("CTRL")), "signature"].mean()
+                sigs_mean.loc[sigs_mean.index.get_level_values('condition') == cond, "abs_change"] = ko - ctrl
+                sigs_mean.loc[sigs_mean.index.get_level_values('condition') == cond, "log_fold_change"] = np.log2(ko / ctrl)
+
+            # save
+            sigs_mean = sigs_mean.sort_index(level='condition')
+            sigs_mean = sigs_mean.sort_values(['signature'])
+            sigs_mean.to_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.{}_means.annotated.csv".format(experiment, n_genes, data_type, level)), index=True)
+            sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.{}_means.annotated.csv".format(experiment, n_genes, data_type, level)), index_col=[0, 1])
+
+            #
+
+            # Filter out genes with less than n of cells
+            if data_type == "CROP":
+                sigs_mean = sigs_mean[sigs_mean["n_cells"] >= 10]
+
+            fig, axis = plt.subplots(1, figsize=(10, 8))
+            sns.stripplot(x=sigs_mean['signature'], y=sigs_mean.index, orient="horiz", ax=axis)
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_{}_signature.strip.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # Given the known condition of each group, what is the deviation from that?
+            # plot as rank of mean
+            fig, axis = plt.subplots(1, figsize=(10, 8))
+            axis.scatter(sigs_mean['signature'].rank(ascending=False), sigs_mean['signature'])
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_{}_signature.rank.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # plot as violinplots (values per cell)
+            p = sigs.reset_index().sort_values(['signature'])
+
+            fig, axis = plt.subplots(1, figsize=(16, 8))
+            sns.violinplot(
+                x="condition", y="signature", hue="gene",
+                data=p,
+                cut=0,
+                order=[cond1, cond2],
+                hue_order=sigs_mean.reset_index().sort_values(["signature"], ascending=False)['gene'].drop_duplicates(),
+                ax=axis)
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_{}_signature.violinplot.sorted_st.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            fig, axis = plt.subplots(1, figsize=(16, 8))
+            sns.violinplot(
+                x="condition", y="signature", hue="gene",
+                data=p,
+                cut=0,
+                order=[cond1, cond2],
+                hue_order=sigs_mean.reset_index().sort_values(["signature"])["gene"].drop_duplicates(),
+                ax=axis)
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_{}_signature.violinplot.sorted_un.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            fig, axis = plt.subplots(1, figsize=(16, 8))
+            sns.violinplot(x="gene", y="signature", hue="condition", cut=0, data=sigs.reset_index(), ax=axis)
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "{}.{}genes.signatures.{}.all_cells.mean_{}_signature.violinplot2.svg".format(experiment, n_genes, data_type, level)), bbox_inches="tight")
+
+            # Make heatmap sorted by median signature position per knockout
+
+            # Group by stimulation / gRNA, get mean expression
             level_matrix = matrix.ix[de_genes].dropna().T.groupby(level=['condition', level]).mean()
 
             # cluster
@@ -1073,55 +1120,199 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
     #
 
-    # Compare CROP and Bulk head-to-head
-    sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.group_means.annotated.csv".format(experiment, n_genes, "CROP")))
-    sigs_mean['data_type'] = "CROP"
-    bulk_sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.group_means.annotated.csv".format(experiment, n_genes, "Bulk")))
-    bulk_sigs_mean['data_type'] = "Bulk"
+    # Compare CROP and Bulk head-to-head at the two levels
+    for level in ["gene", "grna"]:
+        sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.{}_means.annotated.csv".format(experiment, n_genes, "CROP", level)))
+        sigs_mean['data_type'] = "CROP"
+        bulk_sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.{}_means.annotated.csv".format(experiment, n_genes, "Bulk", level)))
+        bulk_sigs_mean['data_type'] = "Bulk"
 
-    t = sigs_mean.append(bulk_sigs_mean)
+        t = sigs_mean.append(bulk_sigs_mean)
 
-    # Scatter plot of signature positioning
-    # Scatter with fold changes relative to CTRL
-    from scipy.stats import pearsonr, spearmanr
-    condition_dict = dict(zip(t['condition'].drop_duplicates(), sns.color_palette("colorblind")))
+        if level == 'grna':
+            t['grna'] = t['grna'].str.replace("Tcrlibrary_", "")
 
-    fig0, axis0 = plt.subplots(1, 2, figsize=(5 * 2, 5 * 1))
-    fig1, axis1 = plt.subplots(1, 2, figsize=(5 * 2, 5 * 1))
-    t_pivot = pd.pivot_table(t, index=['condition', 'gene'], columns="data_type", values="signature").dropna()
-    p = pearsonr(t_pivot["CROP"], t_pivot["Bulk"])[0]
-    s = spearmanr(t_pivot["CROP"], t_pivot["Bulk"])[0]
+        # Scatter plot of signature positioning
+        # Scatter with fold changes relative to CTRL
+        from scipy.stats import pearsonr, spearmanr
+        condition_dict = dict(zip(t['condition'].drop_duplicates(), sns.color_palette("colorblind")))
 
-    axis0[0].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
-    axis0[0].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
-    axis1[0].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
-    axis1[0].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
-    for g in t_pivot.index:
-        axis1[0].text(t_pivot.ix[g]["CROP"], t_pivot.ix[g]["Bulk"], g[1], color=condition_dict[g[0]], alpha=0.8)
+        fig0, axis0 = plt.subplots(1, 2, figsize=(5 * 2, 5 * 1))
+        fig1, axis1 = plt.subplots(1, 2, figsize=(5 * 2, 5 * 1))
+        t_pivot = pd.pivot_table(t, index=['condition', level], columns="data_type", values="signature").dropna()
+        p = pearsonr(t_pivot["CROP"], t_pivot["Bulk"])[0]
+        s = spearmanr(t_pivot["CROP"], t_pivot["Bulk"])[0]
 
-    t_pivot = pd.pivot_table(t, index=['condition', 'gene'], columns="data_type", values="log_fold_change").dropna()
-    p = pearsonr(t_pivot["CROP"], t_pivot["Bulk"])[0]
-    s = spearmanr(t_pivot["CROP"], t_pivot["Bulk"])[0]
+        axis0[0].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
+        axis0[0].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
+        axis1[0].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
+        axis1[0].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
+        for g in t_pivot.index:
+            axis1[0].text(t_pivot.ix[g]["CROP"], t_pivot.ix[g]["Bulk"], g[1], color=condition_dict[g[0]], alpha=0.8)
 
-    axis0[1].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
-    axis0[1].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
-    axis1[1].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
-    axis1[1].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
-    for g in t_pivot.index:
-        axis1[1].text(t_pivot.ix[g]["CROP"], t_pivot.ix[g]["Bulk"], g[1], color=condition_dict[g[0]], alpha=0.8)
+        t_pivot = pd.pivot_table(t, index=['condition', level], columns="data_type", values="log_fold_change").dropna()
+        p = pearsonr(t_pivot["CROP"], t_pivot["Bulk"])[0]
+        s = spearmanr(t_pivot["CROP"], t_pivot["Bulk"])[0]
 
-    axis0[0].set_title("Predicted signature position")
-    axis0[1].set_title("Log fold change of TCR pathway influence")
-    axis1[0].set_title("Predicted signature position")
-    axis1[1].set_title("Log fold change of TCR pathway influence")
-    for q in [axis0, axis1]:
-        for ax in q:
-            ax.set_xlabel("CROP-seq")
-            ax.set_ylabel("RNA-seq on bulk population of KOs")
-    sns.despine(fig0)
-    fig0.savefig(os.path.join(results_dir, "{}.predicted_signature.CROP_vs_Bulk.scatter.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-    sns.despine(fig1)
-    fig1.savefig(os.path.join(results_dir, "{}.predicted_signature.CROP_vs_Bulk.scatter+text.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+        axis0[1].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
+        axis0[1].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
+        axis1[1].scatter(t_pivot["CROP"], t_pivot["Bulk"], color=[condition_dict[k] for k in t_pivot.index.get_level_values("condition")], alpha=0.8)
+        axis1[1].text(t_pivot["CROP"].max(), t_pivot["Bulk"].min(), "Pearson: {0:0.3f}\nSpearman: {1:0.3f}".format(p, s))
+        for g in t_pivot.index:
+            axis1[1].text(t_pivot.ix[g]["CROP"], t_pivot.ix[g]["Bulk"], g[1], color=condition_dict[g[0]], alpha=0.8)
+
+        axis0[0].set_title("Predicted signature position")
+        axis0[1].set_title("Log fold change of TCR pathway influence")
+        axis1[0].set_title("Predicted signature position")
+        axis1[1].set_title("Log fold change of TCR pathway influence")
+        for q in [axis0, axis1]:
+            for ax in q:
+                ax.set_xlabel("CROP-seq")
+                ax.set_ylabel("RNA-seq on bulk population of KOs")
+        sns.despine(fig0)
+        fig0.savefig(os.path.join(results_dir, "{}.predicted_signature.CROP_vs_Bulk.{}.scatter.svg".format(experiment, level)), bbox_inches="tight")
+        sns.despine(fig1)
+        fig1.savefig(os.path.join(results_dir, "{}.predicted_signature.CROP_vs_Bulk.{}.scatter+text.svg".format(experiment, level)), bbox_inches="tight")
+
+
+def intra_variability():
+    from scipy.spatial.distance import pdist
+
+    # Load sc data
+    df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
+
+    # Load bulk data
+    bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
+    bulk_df = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
+
+    # Match genes
+    bulk_df = bulk_df.ix[df.index].dropna()
+
+    # Read in diff genes
+    diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
+    de_genes = diff[abs(diff) > np.percentile(abs(diff), 99)].index.tolist()
+
+    # investigate variability
+    metrics = pd.DataFrame()
+    for data_type, matrix in [("CROP", df), ("Bulk", bulk_df)]:
+        # Load signature postitions
+        if data_type == "CROP":
+            index = ['condition', 'replicate', 'cell', 'grna', 'gene']
+        else:
+            index = ['condition', 'sample_name', 'grna', 'gene']
+        sigs = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.all_cells.correlation.csv".format(experiment, n_genes, data_type))).set_index(index)
+
+        # Make correlation matrix of CTRL cells
+        ctrl = matrix[matrix.columns[matrix.columns.get_level_values("gene").str.contains("CTRL")]].ix[de_genes].dropna()
+        g = sns.clustermap(
+            ctrl.corr(),
+            vmin=0, vmax=1, cmap="inferno",
+            row_colors=get_level_colors(ctrl.columns)[0],
+            col_colors=get_level_colors(ctrl.columns)[0],
+            metric='correlation',
+            row_cluster=True, col_cluster=True,
+            xticklabels=False, yticklabels=False,
+            figsize=(15, 15))
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        g.fig.savefig(os.path.join(results_dir, "{}.variability.{}.CTRL_cells.correlation.heatmap.png".format(experiment, data_type)), bbox_inches="tight", dpi=300)
+        # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+
+        # annotate KO genes with signature at both levels
+        for level in ["gene", "grna"]:
+            # Load signature positions
+            sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.{}_means.annotated.csv".format(experiment, n_genes, data_type, level)), index_col=[0, 1])
+
+            # Get pairwise distances
+            for level_value in matrix.columns.get_level_values(level).drop_duplicates():  # for each gene or gRNA
+                for condition in ["stimulated", "unstimulated"]:  # for each condition
+                    print([data_type, level, condition, level_value])
+
+                    mask = matrix.columns[
+                        (matrix.columns.get_level_values("condition") == condition) &
+                        (matrix.columns.get_level_values(level) == level_value)
+                    ]
+                    if len(mask) == 0:
+                        continue
+                    m = matrix[mask].ix[de_genes].dropna()
+
+                    n_cells = m.shape[1]
+                    signature = sigs_mean.loc[
+                        (sigs_mean.index.get_level_values("condition") == condition) &
+                        (sigs_mean.index.get_level_values(level) == level_value),
+                        "signature"].squeeze()
+
+                    # # Measure root of the sum of pairwise distances
+                    # d = pdist(m, metric='euclidean')
+                    # srs = np.sqrt(np.sum(d))
+
+                    # Measure mean of qv2
+                    mqv2 = (np.mean(m.std(axis=1) / m.mean(axis=1))) ** 2
+
+                    metrics = metrics.append(pd.Series(
+                        [data_type, level, condition, level_value, n_cells, signature, mqv2 / float(n_cells)],
+                        index=["data_type", "level", "condition", "level_value", "n_cells", "signature", "mqv2"]), ignore_index=True)
+
+            metrics["level_value"] = metrics["level_value"].str.replace("Tcrlibrary_", "")
+            pivot = pd.pivot_table(metrics[(metrics["data_type"] == data_type) & (metrics["level"] == level)], index="level_value", columns=["condition"], values="mqv2").dropna()
+            if pivot.empty:
+                continue
+            g = sns.clustermap(
+                pivot.T,
+                row_colors=get_level_colors(pivot.columns),
+                row_cluster=False, col_cluster=False,
+                xticklabels=True, yticklabels=True,
+                figsize=(12, 4))
+            for item in g.ax_heatmap.get_yticklabels():
+                item.set_rotation(0)
+            for item in g.ax_heatmap.get_xticklabels():
+                item.set_rotation(90)
+            g.fig.savefig(os.path.join(results_dir, "{}.variability.{}.{}.heatmap.svg".format(experiment, data_type, level)), bbox_inches="tight", dpi=300)
+            # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+
+        if data_type == "CROP":
+            for gene in ['CTRL', 'RELA', "LCK", "PTPN11"] + ['ETS1', 'GATA3', "RUNX1"]:
+                print(gene)
+                # Make correlation matrix of CTRL cells
+                gene_m = matrix[matrix.columns[matrix.columns.get_level_values("gene") == gene]].ix[de_genes].dropna()
+                g = sns.clustermap(
+                    gene_m.corr(),
+                    vmin=0, vmax=1, cmap="inferno",
+                    row_colors=[get_level_colors(gene_m.columns)[0], get_level_colors(gene_m.columns)[-1]],
+                    col_colors=[get_level_colors(gene_m.columns)[0], get_level_colors(gene_m.columns)[-1]],
+                    metric='correlation',
+                    row_cluster=True, col_cluster=True,
+                    xticklabels=False, yticklabels=False,
+                    figsize=(15, 15))
+                for item in g.ax_heatmap.get_yticklabels():
+                    item.set_rotation(0)
+                for item in g.ax_heatmap.get_xticklabels():
+                    item.set_rotation(90)
+                g.fig.savefig(os.path.join(results_dir, "{}.variability.{}.{}.{}_cells.correlation.heatmap.png".format(experiment, data_type, "gene", gene)), bbox_inches="tight", dpi=300)
+                # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+
+    metrics.to_csv(os.path.join(results_dir, "{}.variability.metrics.csv".format(experiment, data_type, level)))
+
+    for level in ["gene", "grna"]:
+        metrics["level_value"] = metrics["level_value"].str.replace("Tcrlibrary_", "")
+        pivot = pd.pivot_table(metrics[(metrics["level"] == level)], index="level_value", columns=["data_type", "condition"], values="mqv2").dropna()
+        if pivot.empty:
+            continue
+        g = sns.clustermap(
+            pivot.T,
+            row_colors=get_level_colors(pivot.columns),
+            metric='correlation',
+            row_cluster=False, col_cluster=False,
+            xticklabels=True, yticklabels=True,
+            figsize=(12, 4))
+        for item in g.ax_heatmap.get_yticklabels():
+            item.set_rotation(0)
+        for item in g.ax_heatmap.get_xticklabels():
+            item.set_rotation(90)
+        g.fig.savefig(os.path.join(results_dir, "{}.variability.both_techs.{}.heatmap.svg".format(experiment, level)), bbox_inches="tight", dpi=300)
+        # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
 
 
 def gather_scde(assignment, N=30, experiment="CROP-seq_Jurkat_TCR", n_genes=500, conds=["stimulated", "unstimulated"]):
@@ -2396,6 +2587,10 @@ for n_genes in [500]:
         unsupervised(df)
         differential_genes(df, experiment=experiment, method="pca")
         enrich_signature(method="pca")
+
+        # bonus:
+        # investigate intra-gene, inter-grna variability
+        intra_variability()
 
         # Approach 2 (just a bit supervised though):
         # get differential genes between conditions from CTRL cells only
