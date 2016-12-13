@@ -47,7 +47,7 @@ def filter_gRNAs(df, filter_out=None, prefix=""):
 
     # Filter opposite library
     for col in df.columns:
-        if ('TCR' in col) or ('Jurkat' in col):
+        if ('TCR' in col) or ('Jurkat' in col) or ('stimulated' in col) or ('unstimulated' in col):
             df.loc[df.index[df.index.str.contains("Wnt")].tolist(), col] = pd.np.nan
             filtered.loc[filtered.index[filtered.index.str.contains("Tcr")].tolist(), col] = pd.np.nan
         elif ('WNT' in col) or ('HEK' in col):
@@ -63,7 +63,11 @@ def filter_gRNAs(df, filter_out=None, prefix=""):
     x = df.values.reshape((np.product(df.shape), 1))
     sns.distplot(np.log2(1 + x[~np.isnan(x)]), ax=axis, label="True gRNAs")
     x = filtered.values.reshape((np.product(filtered.shape), 1))
-    sns.distplot(np.log2(1 + x[~np.isnan(x)]), ax=axis, label="False assignments")
+    try:
+        sns.distplot(np.log2(1 + x[~np.isnan(x)]), ax=axis, label="False assignments")
+    except ZeroDivisionError:
+        print("Screen does not have quantified non-existing gRNAs. Noise cannot be estimated.")
+        return df
 
     # plot 95% percentile of noise
     lower_bound = np.percentile(x[~np.isnan(x)], 95)
@@ -345,7 +349,7 @@ def gRNA_swarmplot(s1, s2, prefix=""):
         s = s1.join(s2)  # .fillna(0)
         s = s.iloc[np.random.permutation(len(s))]
 
-        if ("TCR" in screen) or ("Jurkat" in screen):
+        if ("TCR" in screen) or ("Jurkat" in screen) or ("stimulated" in screen) or ("unstimulated" in screen):
             s = s.ix[s.index[~s.index.str.contains("Wnt")]]
             if prefix.startswith("mid_screen-"):
                 b = s["gDNA_Jurkat"]
@@ -390,9 +394,9 @@ def gRNA_swarmplot(s1, s2, prefix=""):
     fig.savefig(os.path.join(results_dir, "gRNA_counts.norm.{}.violin_swarmplot.svg".format(prefix)), bbox_inches="tight")
 
 
-prj = Project(os.path.join("metadata", "config.separate.yaml"))
+prj = Project(os.path.join("metadata", "config.yaml"))
 prj.add_sample_sheet()
-prj.paths.results_dir = results_dir = os.path.join("results")
+prj.paths.results_dir = results_dir = os.path.join("results", "screen_dynamics")
 
 sample_annotation = prj.sheet.df
 
@@ -428,9 +432,9 @@ mid_screen_counts.to_csv(os.path.join(results_dir, "gRNA_counts.mid_screen.csv")
 # get guide quantification from CROP-seq
 # merge output (reads in constructs and assignemnts) of each sample
 
-reads = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)))
-scores = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_scores.all.csv".format(experiment)))
-assignment = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)))
+reads = pd.read_csv(os.path.join("results", "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)))
+scores = pd.read_csv(os.path.join("results", "{}.guide_cell_scores.all.csv".format(experiment)))
+assignment = pd.read_csv(os.path.join("results", "{}.guide_cell_assignment.all.csv".format(experiment)))
 
 screen_counts = pd.pivot_table(assignment.groupby(["experiment", "condition", "assignment"]).apply(len).reset_index(), index="assignment", columns="condition", fill_value=0)
 screen_counts.columns = screen_counts.columns.droplevel(level=0)
@@ -472,7 +476,7 @@ for s1, s1_ in [
         # gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]))
         # gRNA_maplot(s1, s2, prefix="-".join([s1_, s2_]))
         # # gRNA_rank_stimulus(s1, s2, prefix="-".join([s1_, s2_]))
-        # gRNA_swarmplot(s1, s2, prefix="-".join([s1_, s2_]))
+        gRNA_swarmplot(s1, s2, prefix="-".join([s1_, s2_]))
         # with text labels
         gRNA_rank(s1, s2, prefix="-".join([s1_, s2_]), text=True)
         gRNA_scatter(s1, s2, prefix="-".join([s1_, s2_]), text=True)

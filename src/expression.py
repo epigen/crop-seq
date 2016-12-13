@@ -272,7 +272,7 @@ def differential_genes(df, experiment, method="pca"):
         pd.DataFrame([df.columns, df.columns.str.get(0)], index=["cell", "condition"]).T.to_csv("col_matrix.csv", index=False)
         return
 
-    def pca(df, level="gene", filter_low=True):
+    def pca(df, level="gene", filter_low=True, percentile=99):
         from sklearn.decomposition import PCA
         level_mapping = dict(zip(df.columns.names, range(len(df.columns.names))))
 
@@ -282,14 +282,15 @@ def differential_genes(df, experiment, method="pca"):
             df2 = df
 
         # Cells grouped by gene
-        df_group = df2.T.groupby(level=[level_mapping["condition"], level_mapping[level]]).median().T
+        df_group = df2.T.groupby(level=[level_mapping["condition"], level_mapping[level]]).mean().T
         df_group.index = df2.index
 
         fitted = PCA().fit_transform(df_group)  # for genes
-
         r = pd.Series(fitted[:, 1], index=df2.index).sort_values()
+        de_genes = r[abs(r) > np.percentile(abs(r), percentile)].index
+
         g = sns.clustermap(
-            df2.ix[r[abs(r) > np.percentile(abs(r), 99)].index],
+            df2.ix[de_genes],
             metric="correlation",
             z_score=0,
             vmin=-3, vmax=3,
@@ -301,10 +302,10 @@ def differential_genes(df, experiment, method="pca"):
             item.set_rotation(0)
             item.set_fontsize(8)
         g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.svg".format(experiment, n_genes)), bbox_inches="tight")
 
-        r = pd.Series(fitted[:, 1], index=df2.index).sort_values()
         g = sns.clustermap(
-            df_group.ix[r[abs(r) > np.percentile(abs(r), 95)].index],
+            df_group.ix[de_genes],
             metric="correlation",
             z_score=0,
             vmin=-3, vmax=3,
@@ -318,6 +319,15 @@ def differential_genes(df, experiment, method="pca"):
             item.set_rotation(0)
             item.set_fontsize(8)
         g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.{}_level.png".format(experiment, n_genes, level)), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.clustering.{}_level.svg".format(experiment, n_genes, level)), bbox_inches="tight")
+
+        s = diff[abs(diff) > np.percentile(abs(diff), percentile)]
+        fig, axis = plt.subplots(1)
+        sns.barplot(s, s.index, orient="horiz")
+        axis.set_ylabel("Gene")
+        axis.set_xlabel("PC contribution")
+        sns.despine(fig)
+        fig.savefig(os.path.join(results_dir, "{}.{}genes.PCA.significant_PC_contribution.svg".format(experiment, n_genes, level)), bbox_inches="tight")
 
         return r
 
@@ -332,12 +342,12 @@ def differential_genes(df, experiment, method="pca"):
         diff.to_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), index=True)
 
 
-def enrich_signature(method="pca"):
+def enrich_signature(method="pca", percentile=99):
     """
     """
     if method == "pca":
         diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
-        degs = pd.Series(diff[abs(diff) > np.percentile(abs(diff), 99)].index)
+        degs = pd.Series(diff[abs(diff) > np.percentile(abs(diff), percentile)].index)
         degs.name = "gene_name"
 
         enr = enrichr(degs.reset_index())
@@ -405,7 +415,7 @@ def enrich_signature(method="pca"):
         fig.savefig(os.path.join(results_dir, "differential_expression.{}.all_genes.posterior_distribution.svg".format(method)), bbox_inches="tight")
 
 
-def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, method="pca", cond1="stimulated", cond2="unstimulated"):
+def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, method="pca", cond1="stimulated", cond2="unstimulated", percentile=99):
 
     def generate_signature_matrix(array, n=101, bounds=(0, 0)):
         """
@@ -505,7 +515,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     # if using pca genes
     if method == "pca":
         diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
-        de_genes = diff[abs(diff) > np.percentile(abs(diff), 99)].index.tolist()
+        de_genes = diff[abs(diff) > np.percentile(abs(diff), percentile)].index.tolist()
 
     # Load bulk data
     bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
@@ -666,7 +676,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
     # visualize
     # sorted by max
-    sigs = cors.apply(lambda x: np.argmax(x), axis=1).sort_values()
+    sigs = cors.apply(lambda x: np.argmax(x), axis=1).astype(float).sort_values()
 
     g = sns.clustermap(
         cors.ix[sigs.index],
@@ -686,7 +696,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
     for level in ['grna', 'gene']:
         c = cors.groupby(level=['condition', level]).mean()
-        cs = c.apply(lambda x: np.argmax(x), axis=1).sort_values()
+        cs = c.apply(lambda x: np.argmax(x), axis=1).astype(float).sort_values()
 
         p = p_values.groupby(level=['condition', level])
 
@@ -699,7 +709,8 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         for item in g.ax_heatmap.get_yticklabels():
             item.set_rotation(0)
             item.set_fontsize(8)
-        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.matrix_pvalue_matrix.sorted.{}.svg".format(experiment, n_genes, level)), bbox_inches="tight")
+        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.correlation_matrix.sorted.{}.svg".format(experiment, n_genes, level)), bbox_inches="tight")
+        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.all_cells.correlation_matrix.sorted.{}.png".format(experiment, n_genes, level)), bbox_inches="tight", dpi=300)
 
     # 3b. get background of signature correlations/positions
     if data_type == "CROP":
@@ -795,7 +806,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
     # visualize
     # sorted by max
-    sigs = bulk_cors.apply(lambda x: np.argmax(x), axis=1).sort_values()
+    sigs = bulk_cors.apply(lambda x: np.argmax(x), axis=1).astype(float).sort_values()
 
     g = sns.clustermap(
         bulk_cors.ix[sigs.index],
@@ -821,7 +832,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
     for level in ['grna', 'gene']:
         c = bulk_cors.groupby(level=['condition', level]).mean()
-        cs = c.apply(lambda x: np.argmax(x), axis=1).sort_values()
+        cs = c.apply(lambda x: np.argmax(x), axis=1).astype(float).sort_values()
 
         p = bulk_p_values.groupby(level=['condition', level])
 
@@ -834,7 +845,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         for item in g.ax_heatmap.get_yticklabels():
             item.set_rotation(0)
             item.set_fontsize(8)
-        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_pvalue_matrix.sorted.{}.svg".format(experiment, n_genes, level)), bbox_inches="tight")
+        g.savefig(os.path.join(results_dir, "{}.{}genes.signature.Bulk.correlation_matrix.sorted.{}.svg".format(experiment, n_genes, level)), bbox_inches="tight")
 
     # # Try quadratic programming
     # fits_raw = list()
