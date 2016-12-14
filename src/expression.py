@@ -1120,7 +1120,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
     #
 
-    # Compare CROP and Bulk head-to-head at the two levels
+    # Compare CROP and Bulk RNA-seq head-to-head at the two levels
     for level in ["gene", "grna"]:
         sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.{}_means.annotated.csv".format(experiment, n_genes, "CROP", level)))
         sigs_mean['data_type'] = "CROP"
@@ -1173,6 +1173,77 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         fig0.savefig(os.path.join(results_dir, "{}.predicted_signature.CROP_vs_Bulk.{}.scatter.svg".format(experiment, level)), bbox_inches="tight")
         sns.despine(fig1)
         fig1.savefig(os.path.join(results_dir, "{}.predicted_signature.CROP_vs_Bulk.{}.scatter+text.svg".format(experiment, level)), bbox_inches="tight")
+
+    #
+
+    # Rarefaction analysis:
+    # we're working with the CROP-seq data for each single-cell:
+    data_type = "CROP"
+    index = ['condition', 'replicate', 'cell', 'grna', 'gene']
+    sigs = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.all_cells.correlation.csv".format(experiment, n_genes, data_type))).set_index(index)
+
+    # The assumption is that the quality of the transcriptome of each single-cell would be the same as currently
+    # and therefore we'll vary only the number of discovered cells per gRNA or gene.
+    # For each subsample we'll compare the CROP-seq data with the bulk and observe several metrics
+    index = ['condition', 'sample_name', 'grna', 'gene']
+    bulk_sigs = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.all_cells.correlation.csv".format(experiment, n_genes, "Bulk"))).set_index(index)
+
+    # Start subsampling in 100 fractions of the data
+    n_iter = 100
+    rare_metrics = pd.DataFrame()
+    for i in range(n_iter):
+        print(i)
+        for condition in [cond1, cond2]:
+            # Compare aggregate signatures at both levels:
+            for level in ["gene", "grna"]:
+                bulk_sigs_mean = bulk_sigs.astype(float).groupby(level=['condition', level]).mean()
+                bulk_sigs_mean['signature'] = bulk_sigs_mean['signature'].replace(0, 1)  # to avoid -inf fold changes, could be done differently too
+                bulk_sigs_mean['data_type'] = "Bulk"
+
+                for fraction in np.arange(0.01, 1.0, 0.01):
+                    total = sigs.shape[0]
+                    # Subsample a fraction of all cells (maintains the distribution of recovered cells)
+                    chosen_indexes = np.random.choice(sigs.index, int(np.round(fraction * total)))
+
+                    sigs_mean = sigs.ix[chosen_indexes].astype(float).groupby(level=['condition', level]).mean()
+                    sigs_mean['signature'] = sigs_mean['signature'].replace(0, 1)  # to avoid -inf fold changes, could be done differently too
+                    sigs_mean['data_type'] = "CROP"
+
+                    # Match CROP and Bulk
+                    t = sigs_mean.append(bulk_sigs_mean).reset_index()
+                    if level == 'grna':
+                        t['grna'] = t['grna'].str.replace("Tcrlibrary_", "")
+
+                    # Measure corerlations
+                    t_pivot = pd.pivot_table(t, index=['condition', level], columns="data_type", values="signature").dropna()
+                    p = pearsonr(t_pivot["CROP"], t_pivot["Bulk"])[0]
+                    s = spearmanr(t_pivot["CROP"], t_pivot["Bulk"])[0]
+
+                    rare_metrics = rare_metrics.append(pd.Series(
+                        [i, condition, level, fraction, p, s],
+                        index=["iteration", "condition", "level", "fraction", "pearson", "spearman"]), ignore_index=True)
+
+    rare_metrics.to_csv(os.path.join(results_dir, "{}.signature.rarefaction_analysis.{}_iterations.csv".format(experiment, n_iter)))
+
+    # Plot metrics
+    m = pd.melt(rare_metrics.drop("iteration", axis=1), id_vars=["condition", "fraction", "level"])
+    g = sns.factorplot(
+        x="fraction", y="value", col="condition", row="level", hue="variable", data=m,
+        palette="colorblind", s=1, alpha=0.8, figsize=(20, 10))
+    for ax in g.axes.flat:
+        ax.set_xlabel("Fraction of cells sampled")
+        ax.set_ylabel("Correlation with RNA-seq of Bulk KO cell line")
+        # ax.set_xticklabels(ax.get_xticklabels()[::2])  # , visible=False
+    g.savefig(os.path.join(results_dir, "{}.signature.rarefaction_analysis.{}_iterations.svg".format(experiment, n_iter)), bbox_inches="tight")
+
+    # Both combined
+    g = sns.factorplot(
+        x="fraction", y="pearson", row="level", hue="condition", data=rare_metrics.drop(["iteration", "spearman"], axis=1),
+        ci=.95, palette="colorblind", s=1, alpha=0.8, figsize=(20, 10))
+    for ax in g.axes.flat:
+        ax.set_xlabel("Fraction of cells sampled")
+        ax.set_ylabel("Correlation with RNA-seq of Bulk KO cell line")
+    g.savefig(os.path.join(results_dir, "{}.signature.rarefaction_analysis.{}_iterations.combined.svg".format(experiment, n_iter)), bbox_inches="tight")
 
 
 def intra_variability():
