@@ -1164,7 +1164,12 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
 
 def intra_variability():
-    from scipy.spatial.distance import pdist
+    """
+    Measure between-gRNA, intra-gene variability
+    """
+    from scipy.spatial.distance import pdist, squareform
+    from sklearn.metrics.pairwise import pairwise_distances
+    from scipy.stats import mannwhitneyu
 
     # Load sc data
     df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
@@ -1175,6 +1180,139 @@ def intra_variability():
 
     # Match genes
     bulk_df = bulk_df.ix[df.index].dropna()
+
+    # Pairwise distances between gRNAs
+    # groupby gRNA, reduce to median
+    df_guide = df.T.groupby(level=["condition", "gene", "grna"]).mean().T
+    euc = pd.DataFrame(squareform(pdist(df_guide.T, metric='euclidean')), index=df_guide.columns, columns=df_guide.columns)
+    euc = pd.DataFrame(pairwise_distances(df_guide.T, metric='l2'), index=df_guide.columns, columns=df_guide.columns)
+
+    g = sns.clustermap(
+        -np.log2(1 + euc),
+        row_colors=get_level_colors(euc.columns),
+        col_colors=get_level_colors(euc.columns),
+        figsize=(20, 20))
+    for item in g.ax_heatmap.get_yticklabels():
+        item.set_rotation(0)
+    for item in g.ax_heatmap.get_xticklabels():
+        item.set_rotation(90)
+    g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.clustermap.png".format(experiment)), bbox_inches="tight", dpi=300)
+
+    # compare intra-gene and between-genes gRNA distances
+    np.fill_diagonal(euc.values, pd.np.nan)  # ignore self-distances
+
+    intra = list()
+    inter = list()
+    for gene in euc.columns.levels[1]:
+        intra += euc.loc[
+            euc.index.get_level_values('gene') == gene,
+            euc.columns.get_level_values('gene') == gene
+        ].values.flatten().tolist()
+        inter += euc.loc[
+            euc.index.get_level_values('gene') == gene,
+            ~(euc.columns.get_level_values('gene') == gene)
+        ].values.flatten().tolist()
+        inter += euc.loc[
+            ~(euc.index.get_level_values('gene') == gene),
+            euc.columns.get_level_values('gene') == gene
+        ].values.flatten().tolist()
+    intra = pd.Series(intra).dropna()
+    inter = pd.Series(inter).dropna()
+    intra.name = "intra"
+    inter.name = "inter"
+
+    # Test difference
+    s, p = mannwhitneyu(intra, inter)
+
+    # Plots
+    # plot distriutions
+    fig, axis = plt.subplots(1)
+    sns.distplot(intra, bins=200, hist=False, kde=True, kde_kws={"shade": True}, label="Intra-gene distance", ax=axis)
+    sns.distplot(inter, bins=200, hist=False, kde=True, kde_kws={"shade": True}, label="Inter-gene distance", ax=axis)
+    axis.text(30, 0.1, "p = {}".format(p))
+    axis.vlines(np.mean(intra), 0, 0.1, color=sns.color_palette("colorblind")[0], linestyle="--")
+    axis.vlines(np.mean(inter), 0, 0.1, color=sns.color_palette("colorblind")[1], linestyle="--")
+    axis.set_xlabel("gRNA pairwise distances")
+    axis.set_ylabel("Density")
+    axis.legend()
+    sns.despine()
+    fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.distplot.png".format(experiment)), bbox_inches="tight", dpi=300)
+
+    # violinplot
+    to_plot = pd.melt(pd.DataFrame([intra, inter]).T).dropna()
+
+    fig, axis = plt.subplots(1)
+    sns.violinplot(data=to_plot, x="variable", y="value", ax=axis)
+    axis.set_ylabel("gRNA pairwise distances")
+    sns.despine()
+    fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.violinplot.png".format(experiment)), bbox_inches="tight", dpi=300)
+
+    # Same with bulk
+
+    # Pairwise distances between gRNAs
+    # groupby gRNA, reduce to median
+    bulk_df_guide = bulk_df.T.groupby(level=["condition", "gene", "grna"]).mean().T
+    # euc = pd.DataFrame(squareform(pdist(bulk_df_guide.T, metric='euclidean')), index=bulk_df_guide.columns, columns=bulk_df_guide.columns)
+    bulk_euc = pd.DataFrame(pairwise_distances(bulk_df_guide.T, metric='l2'), index=bulk_df_guide.columns, columns=bulk_df_guide.columns)
+
+    # compare intra-gene and between-genes gRNA distances
+    np.fill_diagonal(bulk_euc.values, pd.np.nan)  # ignore self-distances
+
+    bulk_intra = list()
+    bulk_inter = list()
+    for gene in bulk_euc.columns.levels[1]:
+        bulk_intra += bulk_euc.loc[
+            bulk_euc.index.get_level_values('gene') == gene,
+            bulk_euc.columns.get_level_values('gene') == gene
+        ].values.flatten().tolist()
+        bulk_inter += bulk_euc.loc[
+            bulk_euc.index.get_level_values('gene') == gene,
+            ~(bulk_euc.columns.get_level_values('gene') == gene)
+        ].values.flatten().tolist()
+        bulk_inter += bulk_euc.loc[
+            ~(bulk_euc.index.get_level_values('gene') == gene),
+            bulk_euc.columns.get_level_values('gene') == gene
+        ].values.flatten().tolist()
+    bulk_intra = pd.Series(bulk_intra).dropna()
+    bulk_inter = pd.Series(bulk_inter).dropna()
+    bulk_intra.name = "bulk_intra"
+    bulk_inter.name = "bulk_inter"
+
+    # Test difference
+    s, p_bulk = mannwhitneyu(bulk_intra, bulk_inter)
+
+    # Plots
+    # plot distriutions
+    fig, axis = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(4 * 2, 4 * 1))
+    sns.distplot(intra, bins=200, hist=False, kde=True, kde_kws={"shade": True}, label="intra-gene gRNA distances; n = {}".format(intra.shape[0]), ax=axis[0])
+    sns.distplot(inter, bins=200, hist=False, kde=True, kde_kws={"shade": True}, label="inter-gene gRNA distances; n = {}".format(inter.shape[0]), ax=axis[0])
+    sns.distplot(bulk_intra, bins=200, hist=False, kde=True, kde_kws={"shade": True}, label="intra-gene gRNA distances; n = {}".format(bulk_intra.shape[0]), ax=axis[1])
+    sns.distplot(bulk_inter, bins=200, hist=False, kde=True, kde_kws={"shade": True}, label="inter-gene gRNA distances; n = {}".format(bulk_inter.shape[0]), ax=axis[1])
+    axis[0].set_title("CROP-seq")
+    axis[1].set_title("Bulk RNA-seq")
+    axis[0].text(30, 0.12, "p = {}".format(p))
+    axis[1].text(30, 0.12, "p = {}".format(p_bulk))
+    axis[0].vlines(np.mean(intra), 0, 0.1, color=sns.color_palette("colorblind")[0], linestyle="--")
+    axis[0].vlines(np.mean(inter), 0, 0.1, color=sns.color_palette("colorblind")[1], linestyle="--")
+    axis[1].vlines(np.mean(bulk_intra), 0, 0.1, color=sns.color_palette("colorblind")[0], linestyle="--")
+    axis[1].vlines(np.mean(bulk_inter), 0, 0.1, color=sns.color_palette("colorblind")[1], linestyle="--")
+    axis[0].set_ylabel("Density")
+    for ax in axis:
+        ax.set_xlabel("gRNA pairwise distances")
+        ax.legend()
+    sns.despine()
+    fig.savefig(os.path.join(results_dir, "..", "{}.bulk_intra_gene_variation_grna_level.euc.distplot.png".format(experiment)), bbox_inches="tight", dpi=300)
+
+    # violinplot
+    to_plot = pd.melt(pd.DataFrame([bulk_intra, bulk_inter]).T).dropna()
+
+    fig, axis = plt.subplots(1)
+    sns.violinplot(data=to_plot, x="variable", y="value", ax=axis)
+    axis.set_ylabel("gRNA pairwise distances")
+    sns.despine()
+    fig.savefig(os.path.join(results_dir, "..", "{}.bulk_intra_gene_variation_grna_level.euc.violinplot.png".format(experiment)), bbox_inches="tight", dpi=300)
+
+    #
 
     # Read in diff genes
     diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
