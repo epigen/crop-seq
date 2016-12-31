@@ -166,6 +166,119 @@ def unsupervised(df, experiment="", filter_low=True):
     plt.scatter(fitted[:, 0], fitted[:, 1], color=colors, alpha=0.4)
 
 
+def significant_perturbation():
+    """
+    Assess whether a gRNA perturbation is significant.
+    """
+    from scipy.stats import mannwhitneyu, wilcoxon, ks_2samp
+    from statsmodels.sandbox.stats.multicomp import multipletests
+    from statsmodels.nonparametric.smoothers_lowess import lowess
+
+    # Load sc data
+    df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
+
+    # Load bulk data
+    bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
+    bulk_df = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
+
+    # Match genes
+    bulk_df = bulk_df.ix[df.index].dropna()
+
+    # Read in diff genes
+    diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
+    de_genes = diff[abs(diff) > np.percentile(abs(diff), 99)].index.tolist()
+
+    # Pairwise distances between gRNAs
+    results = pd.DataFrame()
+    for data_type, tmp_df in [("CROP", df), ("Bulk", bulk_df)]:
+        for subset, index in [("all_genes", df.index), ("sig_genes", de_genes)]:
+
+            # groupby gRNA, reduce to median
+            df_guide = tmp_df.ix[index].dropna().T.groupby(level=["condition", "gene", "grna"]).mean().T
+
+            # get intra-gene and between-genes gRNA distances
+            for condition in df_guide.columns.levels[0]:
+                for grna in df_guide.columns.levels[2]:
+                    print(data_type, subset, condition, grna)
+                    g = df_guide.loc[
+                        :, (df_guide.columns.get_level_values('grna') == grna) & (df_guide.columns.get_level_values('condition') == condition)
+                    ].squeeze()
+                    ctrl = df_guide.loc[
+                        :, (df_guide.columns.get_level_values('grna').str.contains("CTRL")) & (df_guide.columns.get_level_values('condition') == condition)
+                    ].mean(axis=1)
+
+                    n_cells = tmp_df.columns[
+                        (tmp_df.columns.get_level_values('grna') == grna) & (tmp_df.columns.get_level_values('condition') == condition)
+                    ].shape[0]
+
+                    if g.empty or ctrl.empty:
+                        continue
+
+                    s, p = mannwhitneyu(g, ctrl)
+                    results = results.append(pd.Series(
+                        [data_type, subset, condition, grna, s, p, n_cells],
+                        index=["data_type", "subset", "condition", "grna", "stat", "p_value", "n_cells"]
+                    ), ignore_index=True)
+
+    results = results[~results["grna"].str.contains("CTRL")]
+
+    # correct p-values
+    results["p_value"] = results["p_value"].replace(0, 1e-305)
+    qs = results.groupby(["data_type", "subset", "condition"]).apply(lambda x: pd.Series(multipletests(x['p_value'], method="fdr_bh")[1], index=x['grna'])).reset_index().rename(columns={0: "q_value"})
+    results = results.merge(qs)
+    results["q_value"] = -np.log10(results["q_value"])
+    results = results.sort_values("q_value", ascending=False)
+    results.to_csv(os.path.join(results_dir, "..", "{}.perturbation_assessment.csv".format(experiment)), index=False)
+
+    for data_type in results["data_type"].drop_duplicates():
+        results2 = results[(results["data_type"] == data_type)]
+
+        # Plots
+        g = sns.FacetGrid(data=results2, col="subset", hue="condition", sharey=True, sharex=False, size=14, aspect=0.4)
+        g.map(sns.barplot, "q_value", "grna", orient="horiz")
+        g.add_legend()
+        sns.despine(g.fig)
+        g.fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.{}.barplot.svg".format(experiment, data_type)), bbox_inches="tight")
+
+        # Exemplary scatter plots
+        if data_type == "CROP":
+            orig_m = df
+        else:
+            orig_m = bulk_df
+
+        fig, axis = plt.subplots(4, 4, figsize=(4 * 4, 4 * 4))
+        axis = iter(axis.flatten())
+        for subset in results2["subset"].drop_duplicates():
+            for condition in results2["condition"].drop_duplicates():
+                for f in ["tail", "head"]:
+                    t = results2[(results2["condition"] == condition) & (results2["subset"] == subset)].sort_values("q_value")
+                    top_grnas = getattr(t, f)(2)["grna"].squeeze()
+                    for grna in top_grnas:
+                        print(data_type, subset, condition, f, grna)
+                        ax = axis.next()
+                        g = orig_m[orig_m.columns[(orig_m.columns.get_level_values('condition') == condition) & (orig_m.columns.get_level_values('grna') == grna)]].mean(axis=1)
+                        ctrl = orig_m[orig_m.columns[(orig_m.columns.get_level_values('condition') == condition) & (orig_m.columns.get_level_values('grna').str.contains("CTRL"))]].mean(axis=1)
+
+                        if subset != "all_genes":
+                            g = g.ix[de_genes].dropna()
+                            ctrl = ctrl.ix[de_genes].dropna()
+
+                        # x == y
+                        ax.plot((0, max(g.max(), ctrl.max())), (0, max(g.max(), ctrl.max())), ls="--", lw=2, color="black", alpha=0.5)
+
+                        # Fit lowess (for colormap)
+                        l = lowess(g, ctrl, return_sorted=False)
+                        dist = abs(g - l)
+
+                        # Plot scatter
+                        ax.scatter(g, ctrl, alpha=0.5, s=2, color=plt.cm.inferno(dist))
+                        ax.plot((0, max(g.max(), ctrl.max())), (0, max(g.max(), ctrl.max())), ls="--", lw=2, color="black", alpha=0.5)
+                        ax.set_title("; ".join([subset, condition, f, grna]))
+
+        sns.despine(fig)
+        fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.{}.top_scatters.png".format(experiment, data_type)), bbox_inches="tight", dpi=300)
+
+
 def get_level_colors(index):
     pallete = sns.color_palette("colorblind") * int(1e6)
 
@@ -1572,7 +1685,7 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
     # 3). Compare signature (recall, agreement)
     # 4). Compare differential genes in KO vs CTRL (recall, agreement, enrichemnts)
     # x). Each single-cell vs Bulk
-    single_quant_types = [("seurat", matrix_norm)]
+    single_quant_types = [("sc", single_exp_matrix)]
 
     bulk_quant_types = [("bitseq", bulk_exp_matrix)]
 
@@ -1664,14 +1777,14 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
                             [gene_group, condition, level, ko, metric.__name__] + list(r),
                             index=["gene_group", "condition", "level", "KO", "metric", "value", "p_value"]), ignore_index=True)
 
-                    axis[i][j].scatter(bm, sm, alpha=0.75, s=4)
+                    # axis[i][j].scatter(bm, sm, alpha=0.75, s=4)
 
-                    axis[i][j].set_title("{} {}".format(condition, ko))
-                    axis[i][j].text(bm.max(), sm.max(), "Pearson: {0:0.3f}\n Spearman: {1:0.3f}\nRMSE: {2:0.3f}".format(*[x[0] for x in res]))
-                    axis[i][j].set_xlabel("Bulk 3' RNA-seq")
-                    axis[i][j].set_ylabel("Mean of single-cells")
-            sns.despine(fig)
-            fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.scatter.{}.png".format(level)), dpi=300, bbox_inches="tight")
+                    # axis[i][j].set_title("{} {}".format(condition, ko))
+                    # axis[i][j].text(bm.max(), sm.max(), "Pearson: {0:0.3f}\n Spearman: {1:0.3f}\nRMSE: {2:0.3f}".format(*[x[0] for x in res]))
+                    # axis[i][j].set_xlabel("Bulk 3' RNA-seq")
+                    # axis[i][j].set_ylabel("Mean of single-cells")
+            # sns.despine(fig)
+            # fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.scatter.{}.png".format(level)), dpi=300, bbox_inches="tight")
 
             comparisons.to_csv(os.path.join("results", "bulk", "bulk_single-cell_comparison.metrics.csv"))
 
@@ -1692,7 +1805,7 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
                         (comparisons2["metric"] == metric)], values="value", index="metric", columns="KO")
                     sns.heatmap(pivot, ax=axis[j][i], cmap='inferno')  # , annot=True, fmt=".2f", square=True)
 
-                    if j != 3:
+                    if j != 4:
                         axis[j][i].set_xticklabels(axis[j][i].get_xticklabels(), visible=False)
                         axis[j][i].set_xlabel(None, visible=False)
                     else:
