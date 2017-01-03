@@ -1280,9 +1280,17 @@ def intra_variability():
     """
     Measure between-gRNA, intra-gene variability
     """
-    from scipy.spatial.distance import pdist, squareform
     from sklearn.metrics.pairwise import pairwise_distances
     from scipy.stats import mannwhitneyu
+    from scipy.stats import norm
+    from scipy.stats import combine_pvalues
+    from statsmodels.sandbox.stats.multicomp import multipletests
+
+    def vertical_mean_line(x, **kwargs):
+        plt.axvline(x.mean(), **kwargs)
+
+    def z_score(x):
+        return (x - x.mean()) / x.std()
 
     # Load sc data
     df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
@@ -1305,6 +1313,8 @@ def intra_variability():
 
             # groupby gRNA, reduce to median
             df_guide = tmp_df.ix[index].dropna().T.groupby(level=["condition", "gene", "grna"]).mean().T
+
+            # compute all pairwise distances
             # euc = pd.DataFrame(np.triu(squareform(pdist(df_guide.T, metric='euclidean'))), index=df_guide.columns, columns=df_guide.columns).replace(0, np.nan)
             euc = pd.DataFrame(np.triu(pairwise_distances(df_guide.T, metric='l2')), index=df_guide.columns, columns=df_guide.columns).replace(0, np.nan)
 
@@ -1330,155 +1340,111 @@ def intra_variability():
                         series["relation"] = mask_name
                         results = results.append(series)
 
+    results.to_csv(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.csv".format(experiment)), index=False)
+
     # Test differences
     fig, axis = plt.subplots(1)
     results.groupby(["data_type", "subset", "condition"]).apply(
         lambda x: -np.log10(mannwhitneyu(x[x["relation"] == "intra"]["distances"], x[x["relation"] == "inter"]["distances"])[1])
     ).sort_values().plot(kind='bar', ax=axis)
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "..", "{}.bulk_intra_gene_variation_grna_level.euc.p_values.png".format(experiment)), bbox_inches="tight", dpi=300)
+    fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.p_values.svg".format(experiment)), bbox_inches="tight")
 
+    # Plot distributions
     for sub_name in results["subset"].drop_duplicates():
         results2 = results[results["subset"] == sub_name]
 
-        # Plots
+        # For all together
         g = sns.FacetGrid(data=results2, row="data_type", col="condition", hue="relation")
         g.map(sns.distplot, "distances", kde=True, bins=200, hist=False, kde_kws={"shade": True})
+        g.map(vertical_mean_line, "distances")
         g.add_legend()
         sns.despine(g.fig)
-        g.fig.savefig(os.path.join(results_dir, "..", "{}.bulk_intra_gene_variation_grna_level.{}.euc.distplot.png".format(experiment, sub_name)), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.euc.distplot.svg".format(experiment, sub_name)), bbox_inches="tight")
 
         g = sns.FacetGrid(data=results2, row="data_type", col="condition")
         g.map(sns.violinplot, "relation", "distances")
         sns.despine(g.fig)
-        g.fig.savefig(os.path.join(results_dir, "..", "{}.bulk_intra_gene_variation_grna_level.{}.euc.violinplot.png".format(experiment, sub_name)), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.euc.violinplot.svg".format(experiment, sub_name)), bbox_inches="tight")
 
-    #
+        # For each data type separately
+        for data_type in results2['data_type'].drop_duplicates():
+            results3 = results2.loc[(results2["relation"] == "intra") & (results2["data_type"] == data_type), :]
 
-    #
+            # For each gene
+            g = sns.FacetGrid(data=results3, col="gene", col_wrap=5, hue="condition", sharey=False, xlim=(0, 70))
+            g.map(sns.distplot, "distances", kde=True, hist=False, kde_kws={"shade": True})
+            g.map(vertical_mean_line, "distances")
+            g.map(sns.rugplot, "distances")
+            g.add_legend()
+            sns.despine(g.fig)
+            g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.distplot.gene_level.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
-    #
-    # investigate variability
-    metrics = pd.DataFrame()
-    for data_type, matrix in [("CROP", df), ("Bulk", bulk_df)]:
-        # Load signature postitions
-        if data_type == "CROP":
-            index = ['condition', 'replicate', 'cell', 'grna', 'gene']
-        else:
-            index = ['condition', 'sample_name', 'grna', 'gene']
-        sigs = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.all_cells.correlation.csv".format(experiment, n_genes, data_type))).set_index(index)
+            # Call significantly variable genes (between gRNAs)
+            # fit gaussian on pairwise distances between control gRNAs (null)
+            params = norm.fit(z_score(results3.loc[(results3["gene"] == "CTRL"), 'distances']))
+            # z-score pairwise distances within all genes for each gene
+            z_scores = z_score(results3.loc[(results3["relation"] == "intra", 'distances')])
+            # get p-values
+            results3.loc[:, 'p_value'] = norm.sf(abs(z_scores), *params) * 2  # twosided p-value
+            results3.loc[:, 'q_value'] = multipletests(results3.loc[:, 'p_value'], method="fdr_bh")[1]
+            results3.to_csv(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.csv".format(experiment, sub_name, data_type)), index=False)
 
-        # Make correlation matrix of CTRL cells
-        ctrl = matrix[matrix.columns[matrix.columns.get_level_values("gene").str.contains("CTRL")]].ix[de_genes].dropna()
-        g = sns.clustermap(
-            ctrl.corr(),
-            vmin=0, vmax=1, cmap="inferno",
-            row_colors=get_level_colors(ctrl.columns)[0],
-            col_colors=get_level_colors(ctrl.columns)[0],
-            metric='correlation',
-            row_cluster=True, col_cluster=True,
-            xticklabels=False, yticklabels=False,
-            figsize=(15, 15))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
-        g.fig.savefig(os.path.join(results_dir, "{}.variability.{}.CTRL_cells.correlation.heatmap.png".format(experiment, data_type)), bbox_inches="tight", dpi=300)
-        # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+            # combine p-values for each gene
+            diff = results3.groupby(["condition", "gene"])['q_value'].apply(lambda x: combine_pvalues(x)[1]).reset_index()
+            diff['log_q_value'] = -np.log10(diff['q_value'])
 
-        # annotate KO genes with signature at both levels
-        for level in ["gene", "grna"]:
-            # Load signature positions
-            sigs_mean = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.{}_means.annotated.csv".format(experiment, n_genes, data_type, level)), index_col=[0, 1])
+            # get variability per gene
+            dist_mean = results3.groupby(["condition", "gene"])['distances'].mean()
+            dist_mean.name = "distance_mean"
+            dist_std = results3.groupby(["condition", "gene"])['distances'].std()
+            dist_std.name = "distance_std"
+            dist = pd.DataFrame([dist_mean, dist_std]).T
 
-            # Get pairwise distances
-            for level_value in matrix.columns.get_level_values(level).drop_duplicates():  # for each gene or gRNA
-                for condition in ["stimulated", "unstimulated"]:  # for each condition
-                    print([data_type, level, condition, level_value])
+            # get gRNA efficiency and cell number
+            annot = pd.read_csv(os.path.join("metadata", "guide_annotation.csv"))
+            grna_var = annot.groupby(["gene"])["specificity_score", "efficiency_score"].std().reset_index()
 
-                    mask = matrix.columns[
-                        (matrix.columns.get_level_values("condition") == condition) &
-                        (matrix.columns.get_level_values(level) == level_value)
-                    ]
-                    if len(mask) == 0:
-                        continue
-                    m = matrix[mask].ix[de_genes].dropna()
+            # add cell number
+            n_cells = df.T.groupby(level=["condition", "gene", "grna"]).apply(len).groupby(level=['condition', 'gene']).std()
+            n_cells.name = "n_cells"
 
-                    n_cells = m.shape[1]
-                    signature = sigs_mean.loc[
-                        (sigs_mean.index.get_level_values("condition") == condition) &
-                        (sigs_mean.index.get_level_values(level) == level_value),
-                        "signature"].squeeze()
+            # put all together
+            diff = pd.merge(
+                pd.merge(
+                    pd.merge(diff, dist.reset_index(), on=["condition", "gene"]),
+                    grna_var, on="gene"),
+                n_cells.reset_index(), on=["condition", "gene"]).set_index(["condition", "gene"])
 
-                    # # Measure root of the sum of pairwise distances
-                    # d = pdist(m, metric='euclidean')
-                    # srs = np.sqrt(np.sum(d))
+            # Rank vs distance with p-value as size
+            cmap = dict(zip(set(diff.index.get_level_values('condition')), sns.color_palette("colorblind")))
 
-                    # Measure mean of qv2
-                    mqv2 = (np.mean(m.std(axis=1) / m.mean(axis=1))) ** 2
+            fig, axis = plt.subplots(1)
+            axis.scatter(diff["distance_mean"].rank(), diff["distance_mean"], s=20 + (5 * diff["log_q_value"]), color=[cmap[x] for x in diff.index.get_level_values('condition')])
+            for i in diff.index:
+                axis.text(diff["distance_mean"].rank().ix[i], diff.ix[i]["distance_mean"], " ".join(i))
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.rank.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
-                    metrics = metrics.append(pd.Series(
-                        [data_type, level, condition, level_value, n_cells, signature, mqv2 / float(n_cells)],
-                        index=["data_type", "level", "condition", "level_value", "n_cells", "signature", "mqv2"]), ignore_index=True)
+            fig, axis = plt.subplots(1)
+            sns.stripplot(x="gene", y="distances", hue="condition", data=results3.sort_values("distances"), ax=axis)
+            axis.axhline(np.percentile(results3[results3['gene'] == "CTRL"]['distances'], 99))
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.stripplot.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
-            metrics["level_value"] = metrics["level_value"].str.replace("Tcrlibrary_", "")
-            pivot = pd.pivot_table(metrics[(metrics["data_type"] == data_type) & (metrics["level"] == level)], index="level_value", columns=["condition"], values="mqv2").dropna()
-            if pivot.empty:
-                continue
-            g = sns.clustermap(
-                pivot.T,
-                row_colors=get_level_colors(pivot.columns),
-                row_cluster=False, col_cluster=False,
-                xticklabels=True, yticklabels=True,
-                figsize=(12, 4))
-            for item in g.ax_heatmap.get_yticklabels():
-                item.set_rotation(0)
-            for item in g.ax_heatmap.get_xticklabels():
-                item.set_rotation(90)
-            g.fig.savefig(os.path.join(results_dir, "{}.variability.{}.{}.heatmap.svg".format(experiment, data_type, level)), bbox_inches="tight", dpi=300)
-            # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+            # "Volcano plot"
+            fig, axis = plt.subplots(1)
+            axis.scatter(diff["distance_mean"], diff["log_q_value"])
+            for i in diff.index:
+                axis.text(diff.ix[i]["distance_mean"], diff.ix[i]["log_q_value"], " ".join(i))
+            sns.despine(fig)
+            fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.volcano.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
-        if data_type == "CROP":
-            for gene in ['CTRL', 'RELA', "LCK", "PTPN11"] + ['ETS1', 'GATA3', "RUNX1"]:
-                print(gene)
-                # Make correlation matrix of CTRL cells
-                gene_m = matrix[matrix.columns[matrix.columns.get_level_values("gene") == gene]].ix[de_genes].dropna()
-                g = sns.clustermap(
-                    gene_m.corr(),
-                    vmin=0, vmax=1, cmap="inferno",
-                    row_colors=[get_level_colors(gene_m.columns)[0], get_level_colors(gene_m.columns)[-1]],
-                    col_colors=[get_level_colors(gene_m.columns)[0], get_level_colors(gene_m.columns)[-1]],
-                    metric='correlation',
-                    row_cluster=True, col_cluster=True,
-                    xticklabels=False, yticklabels=False,
-                    figsize=(15, 15))
-                for item in g.ax_heatmap.get_yticklabels():
-                    item.set_rotation(0)
-                for item in g.ax_heatmap.get_xticklabels():
-                    item.set_rotation(90)
-                g.fig.savefig(os.path.join(results_dir, "{}.variability.{}.{}.{}_cells.correlation.heatmap.png".format(experiment, data_type, "gene", gene)), bbox_inches="tight", dpi=300)
-                # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
-
-    metrics.to_csv(os.path.join(results_dir, "{}.variability.metrics.csv".format(experiment, data_type, level)))
-
-    for level in ["gene", "grna"]:
-        metrics["level_value"] = metrics["level_value"].str.replace("Tcrlibrary_", "")
-        pivot = pd.pivot_table(metrics[(metrics["level"] == level)], index="level_value", columns=["data_type", "condition"], values="mqv2").dropna()
-        if pivot.empty:
-            continue
-        g = sns.clustermap(
-            pivot.T,
-            row_colors=get_level_colors(pivot.columns),
-            metric='correlation',
-            row_cluster=False, col_cluster=False,
-            xticklabels=True, yticklabels=True,
-            figsize=(12, 4))
-        for item in g.ax_heatmap.get_yticklabels():
-            item.set_rotation(0)
-        for item in g.ax_heatmap.get_xticklabels():
-            item.set_rotation(90)
-        g.fig.savefig(os.path.join(results_dir, "{}.variability.both_techs.{}.heatmap.svg".format(experiment, level)), bbox_inches="tight", dpi=300)
-        # g.fig.savefig(os.path.join(results_dir, "{}.{}genes.differential_expression.{}.single_cells.sorted_signature.svg".format(experiment, n_genes, data_type)), bbox_inches="tight")
+            # Vizualize all pairwise relationships
+            if data_type == "Bulk":
+                diff = diff.drop("distance_std", axis=1)
+            g = sns.pairplot(diff.dropna().reset_index(), hue="condition")
+            g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.pairplot.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
 
 def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
