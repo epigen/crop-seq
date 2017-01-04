@@ -53,15 +53,14 @@ def read_seurat_hdf5(hdf5_file):
     return seurat_matrix
 
 
-def unsupervised(df, experiment="", filter_low=True):
+def unsupervised(df, experiment="", filter_low=False):
     # Inspect
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE, MDS, LocallyLinearEmbedding, SpectralEmbedding, Isomap
 
     methods = ["PCA", "TSNE", "LocallyLinearEmbedding", "SpectralEmbedding", "Isomap", "MDS"]
 
-    if filter_low:
-        df = df[df.sum().sort_values().tail(int(df.shape[1] * 0.25)).index]  # get top 25% covered cells
+    df2 = df[df.sum().sort_values().tail(int(df.shape[1] * 0.25)).index]  # get top 25% covered cells
 
     level_mapping = dict(zip(df.columns.names, range(len(df.columns.names))))
 
@@ -148,31 +147,37 @@ def unsupervised(df, experiment="", filter_low=True):
 
         fig.savefig(os.path.join(results_dir, "{}.clustering.{}.png".format(experiment, group)), bbox_inches="tight", dpi=300)
 
-    # TSNE-specific
-    # get top 25% covered cells CTRL
-    df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
+    # Expression of some markers in PCA
+    pca = PCA(n_components=2)
+    fitted = pca.fit(df2.T).transform(df2.T)
+    # eigenvalues = pca.explained_variance_ratio_
+    # loadings = pca.components_
+    # z_fitted = np.dot(fitted, loadings)
 
-    df2 = df[df.sum().sort_values().tail(int(df.shape[1] * 0.25)).index]
-    df2 = df2[df2.columns[df2.columns.get_level_values("gene") == "CTRL"]]
+    fitted = pd.DataFrame(fitted, index=df2.columns, columns=["PC1", "PC2"])
 
-    # make PCA on them
-    pca_matrix = PCA().fit_transform(df2.T)
-    fitted = TSNE(n_components=2, init=pca_matrix[:, :2], early_exaggeration=6.0, metric="correlation", verbose=2).fit_transform(df.T)
-
-    # color mapping
-    integer_map = dict(zip(df.columns.levels[level_mapping[level]], sns.color_palette("colorblind") * int(1e5)))
-    colors = [integer_map[x] for x in df.columns.get_level_values(level)]
-
-    plt.scatter(fitted[:, 0], fitted[:, 1], color=colors, alpha=0.4)
+    fig, axis = plt.subplots(1, 5, figsize=(4 * 5, 4 * 1))
+    for level in range(2):
+        axis[level].scatter(fitted["PC1"], fitted["PC2"], s=10, alpha=0.4, color=get_level_colors(df2.columns)[level])
+    cmap = matplotlib.cm.Blues
+    axis[5 - 1].scatter(fitted["PC1"], fitted["PC2"], s=15, alpha=0.5, color=cmap(z_score(df2.ix["TRAC"])))
+    axis[5 - 2].scatter(fitted["PC1"], fitted["PC2"], s=15, alpha=0.5, color=cmap(z_score(df2.ix["JARID2"])))
+    axis[5 - 3].scatter(fitted["PC1"], fitted["PC2"], s=15, alpha=0.5, color=cmap(z_score(df2.ix["PCNA"])))
+    fig.savefig(os.path.join(results_dir, "..", "{}.PCA_clustering.specific_genes.svg".format(experiment)), bbox_inches="tight")
 
 
 def significant_perturbation():
     """
     Assess whether a gRNA perturbation is significant.
     """
-    from scipy.stats import mannwhitneyu, wilcoxon, ks_2samp
+    from scipy.stats import mannwhitneyu
     from statsmodels.sandbox.stats.multicomp import multipletests
     from statsmodels.nonparametric.smoothers_lowess import lowess
+    from scipy.stats import norm
+    from scipy.stats import combine_pvalues
+
+    def z_score(x):
+        return (x - x.mean()) / x.std()
 
     # Load sc data
     df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
@@ -188,25 +193,27 @@ def significant_perturbation():
     diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
     de_genes = diff[abs(diff) > np.percentile(abs(diff), 99)].index.tolist()
 
-    # Pairwise distances between gRNAs
+    # Calculate perturbation p-values
     results = pd.DataFrame()
     for data_type, tmp_df in [("CROP", df), ("Bulk", bulk_df)]:
         for subset, index in [("all_genes", df.index), ("sig_genes", de_genes)]:
 
             # groupby gRNA, reduce to median
-            df_guide = tmp_df.ix[index].dropna().T.groupby(level=["condition", "gene", "grna"]).mean().T
+            df_guide = tmp_df.ix[index].dropna().T.groupby(level=["condition", "gene", "grna"]).median().T
 
-            # get intra-gene and between-genes gRNA distances
             for condition in df_guide.columns.levels[0]:
+                ctrl = df_guide.loc[
+                    :, (df_guide.columns.get_level_values('grna').str.contains("CTRL")) & (df_guide.columns.get_level_values('condition') == condition)
+                ].median(axis=1)
+
+                # fit gaussian on control gRNA expression (null)
+                params = norm.fit(z_score(ctrl))
+
                 for grna in df_guide.columns.levels[2]:
                     print(data_type, subset, condition, grna)
                     g = df_guide.loc[
                         :, (df_guide.columns.get_level_values('grna') == grna) & (df_guide.columns.get_level_values('condition') == condition)
                     ].squeeze()
-                    ctrl = df_guide.loc[
-                        :, (df_guide.columns.get_level_values('grna').str.contains("CTRL")) & (df_guide.columns.get_level_values('condition') == condition)
-                    ].mean(axis=1)
-
                     n_cells = tmp_df.columns[
                         (tmp_df.columns.get_level_values('grna') == grna) & (tmp_df.columns.get_level_values('condition') == condition)
                     ].shape[0]
@@ -214,31 +221,53 @@ def significant_perturbation():
                     if g.empty or ctrl.empty:
                         continue
 
-                    s, p = mannwhitneyu(g, ctrl)
+                    # get MannWhitney p-value
+                    s, p = mannwhitneyu(g.astype(np.float128), ctrl.astype(np.float128))
+
+                    # get p-value from fitted dist
+                    es, ep = combine_pvalues(norm.sf(abs(z_score(g)), *params) * 2)  # twosided p-value
+
                     results = results.append(pd.Series(
-                        [data_type, subset, condition, grna, s, p, n_cells],
-                        index=["data_type", "subset", "condition", "grna", "stat", "p_value", "n_cells"]
+                        [data_type, subset, condition, g.name[1], grna, s, p, n_cells, es, ep],
+                        index=["data_type", "subset", "condition", "gene", "grna", "stat", "p_value", "n_cells", "estat", "ep_value"]
                     ), ignore_index=True)
 
     results = results[~results["grna"].str.contains("CTRL")]
 
     # correct p-values
-    results["p_value"] = results["p_value"].replace(0, 1e-305)
-    qs = results.groupby(["data_type", "subset", "condition"]).apply(lambda x: pd.Series(multipletests(x['p_value'], method="fdr_bh")[1], index=x['grna'])).reset_index().rename(columns={0: "q_value"})
+    qs = results.groupby(
+        ["data_type", "subset", "condition"]
+    ).apply(lambda x: pd.Series(multipletests(x['p_value'], method="fdr_bh")[1], index=x['grna'])).reset_index().rename(columns={0: "q_value"})
     results = results.merge(qs)
-    results["q_value"] = -np.log10(results["q_value"])
-    results = results.sort_values("q_value", ascending=False)
+    results["log_q_value"] = -np.log10(results["q_value"])
+    results = results.sort_values("log_q_value", ascending=False)
     results.to_csv(os.path.join(results_dir, "..", "{}.perturbation_assessment.csv".format(experiment)), index=False)
 
-    for data_type in results["data_type"].drop_duplicates():
-        results2 = results[(results["data_type"] == data_type)]
+    g = sns.FacetGrid(data=results.sort_values("log_q_value").replace(np.inf, 360), col="data_type", row="subset", hue="condition", sharey=False, sharex=False, size=4, aspect=1)
+    g.map(sns.stripplot, "gene", "log_q_value")
+    g.add_legend()
+    sns.despine(g.fig)
+    for ax in g.axes.flat:
+        ax.axhline(-np.log10(0.05))
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    g.fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.p_values.stripplot.svg".format(experiment)), bbox_inches="tight")
 
-        # Plots
-        g = sns.FacetGrid(data=results2, col="subset", hue="condition", sharey=True, sharex=False, size=14, aspect=0.4)
-        g.map(sns.barplot, "q_value", "grna", orient="horiz")
-        g.add_legend()
-        sns.despine(g.fig)
-        g.fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.{}.barplot.svg".format(experiment, data_type)), bbox_inches="tight")
+    # combine p-values for each gene
+    cp = results.groupby(["data_type", "subset", "condition", "gene"])['p_value'].apply(lambda x: combine_pvalues(x)[1]).reset_index()
+    cp["q_value"] = multipletests(cp['p_value'], method="fdr_bh")[1]
+    cp['log_q_value'] = -np.log10(cp['q_value'])
+
+    g = sns.FacetGrid(data=cp.sort_values("log_q_value").replace(np.inf, 160), col="data_type", row="subset", hue="condition", sharey=False, sharex=False, size=4, aspect=1)
+    g.map(sns.stripplot, "gene", "log_q_value")
+    g.add_legend()
+    sns.despine(g.fig)
+    for ax in g.axes.flat:
+        ax.axhline(-np.log10(0.05))
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    g.fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.combined_p_values.stripplot.svg".format(experiment)), bbox_inches="tight")
+
+    for data_type in cp["data_type"].drop_duplicates():
+        cp2 = cp[(cp["data_type"] == data_type)]
 
         # Exemplary scatter plots
         if data_type == "CROP":
@@ -246,18 +275,18 @@ def significant_perturbation():
         else:
             orig_m = bulk_df
 
-        fig, axis = plt.subplots(4, 4, figsize=(4 * 4, 4 * 4))
+        fig, axis = plt.subplots(2, 4, figsize=(4 * 4, 2 * 4))
         axis = iter(axis.flatten())
-        for subset in results2["subset"].drop_duplicates():
-            for condition in results2["condition"].drop_duplicates():
+        for subset in cp2["subset"].drop_duplicates():
+            for condition in cp2["condition"].drop_duplicates():
                 for f in ["tail", "head"]:
-                    t = results2[(results2["condition"] == condition) & (results2["subset"] == subset)].sort_values("q_value")
-                    top_grnas = getattr(t, f)(2)["grna"].squeeze()
-                    for grna in top_grnas:
-                        print(data_type, subset, condition, f, grna)
+                    t = cp2[(cp2["condition"] == condition) & (cp2["subset"] == subset)].sort_values("log_q_value")
+                    top_genes = getattr(t, f)(1)["gene"]
+                    for gene in top_genes:
+                        print(data_type, subset, condition, f, gene)
                         ax = axis.next()
-                        g = orig_m[orig_m.columns[(orig_m.columns.get_level_values('condition') == condition) & (orig_m.columns.get_level_values('grna') == grna)]].mean(axis=1)
-                        ctrl = orig_m[orig_m.columns[(orig_m.columns.get_level_values('condition') == condition) & (orig_m.columns.get_level_values('grna').str.contains("CTRL"))]].mean(axis=1)
+                        g = orig_m[orig_m.columns[(orig_m.columns.get_level_values('condition') == condition) & (orig_m.columns.get_level_values('gene') == gene)]].mean(axis=1)
+                        ctrl = orig_m[orig_m.columns[(orig_m.columns.get_level_values('condition') == condition) & (orig_m.columns.get_level_values('gene').str.contains("CTRL"))]].mean(axis=1)
 
                         if subset != "all_genes":
                             g = g.ix[de_genes].dropna()
@@ -273,10 +302,15 @@ def significant_perturbation():
                         # Plot scatter
                         ax.scatter(g, ctrl, alpha=0.5, s=2, color=plt.cm.inferno(dist))
                         ax.plot((0, max(g.max(), ctrl.max())), (0, max(g.max(), ctrl.max())), ls="--", lw=2, color="black", alpha=0.5)
-                        ax.set_title("; ".join([subset, condition, f, grna]))
+                        ax.set_title("; ".join([subset, condition, f, gene]))
 
         sns.despine(fig)
         fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.{}.top_scatters.png".format(experiment, data_type)), bbox_inches="tight", dpi=300)
+        fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.{}.top_scatters.svg".format(experiment, data_type)), bbox_inches="tight")
+
+
+def z_score(x):
+    return (x - x.mean()) / x.std()
 
 
 def get_level_colors(index):
