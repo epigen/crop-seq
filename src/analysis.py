@@ -15,13 +15,15 @@ pd.set_option("date_dayfirst", True)
 sns.set(context="paper", style="white", palette="pastel", color_codes=True)
 sns.set_palette(sns.color_palette("colorblind"))
 matplotlib.rcParams["svg.fonttype"] = "none"
+matplotlib.rcParams['xtick.direction'] = 'out'
+matplotlib.rcParams['ytick.direction'] = 'out'
 matplotlib.rc('text', usetex=False)
 
 import sys
 sys.setrecursionlimit(10000)
 
 
-def normalize(df, experiment="", kind="total"):
+def normalize(df, experiment="", kind="total", results_dir="results"):
     def normalize_by_total(df):
         """
         Normalize expression by total number of counts per cell.
@@ -53,7 +55,7 @@ def read_seurat_hdf5(hdf5_file):
     return seurat_matrix
 
 
-def unsupervised(df, experiment="", filter_low=False):
+def unsupervised(df, experiment="CROP-seq_Jurkat_TCR", filter_low=False, results_dir="results"):
     # Inspect
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE, MDS, LocallyLinearEmbedding, SpectralEmbedding, Isomap
@@ -163,10 +165,10 @@ def unsupervised(df, experiment="", filter_low=False):
     axis[5 - 1].scatter(fitted["PC1"], fitted["PC2"], s=15, alpha=0.5, color=cmap(z_score(df2.ix["TRAC"])))
     axis[5 - 2].scatter(fitted["PC1"], fitted["PC2"], s=15, alpha=0.5, color=cmap(z_score(df2.ix["JARID2"])))
     axis[5 - 3].scatter(fitted["PC1"], fitted["PC2"], s=15, alpha=0.5, color=cmap(z_score(df2.ix["PCNA"])))
-    fig.savefig(os.path.join(results_dir, "..", "{}.PCA_clustering.specific_genes.svg".format(experiment)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "{}.PCA_clustering.specific_genes.svg".format(experiment)), bbox_inches="tight")
 
 
-def significant_perturbation():
+def significant_perturbation(df, df_bulk, de_genes, results_dir="results", experiment="CROP-seq_Jurkat_TCR"):
     """
     Assess whether a gRNA perturbation is significant.
     """
@@ -179,23 +181,9 @@ def significant_perturbation():
     def z_score(x):
         return (x - x.mean()) / x.std()
 
-    # Load sc data
-    df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
-
-    # Load bulk data
-    bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
-    bulk_df = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
-
-    # Match genes
-    bulk_df = bulk_df.ix[df.index].dropna()
-
-    # Read in diff genes
-    diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
-    de_genes = diff[abs(diff) > np.percentile(abs(diff), 99)].index.tolist()
-
     # Calculate perturbation p-values
     results = pd.DataFrame()
-    for data_type, tmp_df in [("CROP", df), ("Bulk", bulk_df)]:
+    for data_type, tmp_df in [("CROP", df), ("Bulk", df_bulk)]:
         for subset, index in [("all_genes", df.index), ("sig_genes", de_genes)]:
 
             # groupby gRNA, reduce to median
@@ -241,7 +229,7 @@ def significant_perturbation():
     results = results.merge(qs)
     results["log_q_value"] = -np.log10(results["q_value"])
     results = results.sort_values("log_q_value", ascending=False)
-    results.to_csv(os.path.join(results_dir, "..", "{}.perturbation_assessment.csv".format(experiment)), index=False)
+    results.to_csv(os.path.join(results_dir, "{}.perturbation_assessment.csv".format(experiment)), index=False)
 
     g = sns.FacetGrid(data=results.sort_values("log_q_value").replace(np.inf, 360), col="data_type", row="subset", hue="condition", sharey=False, sharex=False, size=4, aspect=1)
     g.map(sns.stripplot, "gene", "log_q_value")
@@ -250,7 +238,7 @@ def significant_perturbation():
     for ax in g.axes.flat:
         ax.axhline(-np.log10(0.05))
         ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-    g.fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.p_values.stripplot.svg".format(experiment)), bbox_inches="tight")
+    g.fig.savefig(os.path.join(results_dir, "{}.perturbation_assessment.p_values.stripplot.svg".format(experiment)), bbox_inches="tight")
 
     # combine p-values for each gene
     cp = results.groupby(["data_type", "subset", "condition", "gene"])['p_value'].apply(lambda x: combine_pvalues(x)[1]).reset_index()
@@ -264,7 +252,7 @@ def significant_perturbation():
     for ax in g.axes.flat:
         ax.axhline(-np.log10(0.05))
         ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-    g.fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.combined_p_values.stripplot.svg".format(experiment)), bbox_inches="tight")
+    g.fig.savefig(os.path.join(results_dir, "{}.perturbation_assessment.combined_p_values.stripplot.svg".format(experiment)), bbox_inches="tight")
 
     for data_type in cp["data_type"].drop_duplicates():
         cp2 = cp[(cp["data_type"] == data_type)]
@@ -273,7 +261,7 @@ def significant_perturbation():
         if data_type == "CROP":
             orig_m = df
         else:
-            orig_m = bulk_df
+            orig_m = df_bulk
 
         fig, axis = plt.subplots(2, 4, figsize=(4 * 4, 2 * 4))
         axis = iter(axis.flatten())
@@ -305,8 +293,8 @@ def significant_perturbation():
                         ax.set_title("; ".join([subset, condition, f, gene]))
 
         sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.{}.top_scatters.png".format(experiment, data_type)), bbox_inches="tight", dpi=300)
-        fig.savefig(os.path.join(results_dir, "..", "{}.perturbation_assessment.{}.top_scatters.svg".format(experiment, data_type)), bbox_inches="tight")
+        fig.savefig(os.path.join(results_dir, "{}.perturbation_assessment.{}.top_scatters.png".format(experiment, data_type)), bbox_inches="tight", dpi=300)
+        fig.savefig(os.path.join(results_dir, "{}.perturbation_assessment.{}.top_scatters.svg".format(experiment, data_type)), bbox_inches="tight")
 
 
 def z_score(x):
@@ -331,17 +319,9 @@ def get_level_colors(index):
     return colors
 
 
-def differential_genes(df, experiment, method="pca"):
+def differential_genes(df, experiment, method="pca", results_dir="results", n_genes=500):
     """
     """
-    def scde():
-        return
-
-    def deseq2(df):
-        df.to_csv("count_matrix.csv")
-        pd.DataFrame([df.columns, df.columns.str.get(0)], index=["cell", "condition"]).T.to_csv("col_matrix.csv", index=False)
-        return
-
     def pca(df, level="gene", filter_low=True, percentile=99):
         from sklearn.decomposition import PCA
         level_mapping = dict(zip(df.columns.names, range(len(df.columns.names))))
@@ -412,89 +392,47 @@ def differential_genes(df, experiment, method="pca"):
 
     print("Getting differential gene expression for experiment: '{}'".format(experiment))
 
-    if method == "scde":
-        scde()
-    elif method == "deseq":
-        deseq2(df)
-    elif method == "pca":
+    if method == "pca":
         diff = pca(df)
         diff.to_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), index=True)
 
+    return diff
 
-def enrich_signature(method="pca", percentile=99):
+
+def enrich_signature(method="pca", percentile=99, results_dir="results", experiment="CROP-seq_Jurkat_TCR", n_genes=500):
     """
     """
-    if method == "pca":
-        diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
-        degs = pd.Series(diff[abs(diff) > np.percentile(abs(diff), percentile)].index)
-        degs.name = "gene_name"
+    diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
+    degs = pd.Series(diff[abs(diff) > np.percentile(abs(diff), percentile)].index)
+    degs.name = "gene_name"
 
-        enr = enrichr(degs.reset_index())
-        enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(method)), index=False, encoding="utf8")
+    enr = enrichr(degs.reset_index())
+    enr.to_csv(os.path.join(results_dir, "differential_expression.{}.enrichr.csv".format(method)), index=False, encoding="utf8")
 
-        # Plot top N terms of each library
-        n = 8
+    # Plot top N terms of each library
+    n = 8
 
-        to_plot = [
-            'GO_Biological_Process_2015',
-            "KEGG_2016",
-            "WikiPathways_2016",
-            "Reactome_2016",
-            "BioCarta_2016",
-            "NCI-Nature_2016"]
+    to_plot = [
+        'GO_Biological_Process_2015',
+        "KEGG_2016",
+        "WikiPathways_2016",
+        "Reactome_2016",
+        "BioCarta_2016",
+        "NCI-Nature_2016"]
 
-        p = enr.ix[enr[enr['gene_set_library'].isin(to_plot)].groupby("gene_set_library")['combined_score'].nlargest(n).index.get_level_values(1)].sort_values("combined_score", ascending=False)
+    p = enr.ix[enr[enr['gene_set_library'].isin(to_plot)].groupby("gene_set_library")['combined_score'].nlargest(n).index.get_level_values(1)].sort_values("combined_score", ascending=False)
 
-        fig, axis = plt.subplots(1)
-        sns.barplot(data=p, y="description", x="combined_score", orient="horiz", hue="gene_set_library")
-        axis.set_xlabel("Combined score")
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "differential_expression.{}.enrichr.top{}_terms.svg".format(method, n)), bbox_inches="tight")
-
-    elif method == "scde":
-        # load stats of diff genes
-        stats = pd.read_csv(
-            os.path.join(results_dir, "digital_expression.500genes.CROP-seq_Jurkat_TCR.scde.ctrl_vs_ctrl.diff_expr.csv")
-        )
-        stats.index.name = "gene_name"
-        # remove artitificial chromosomes
-        stats = stats[
-            (~stats.index.str.startswith("CTRL")) &
-            (~stats.index.str.contains("library_"))]
-
-        degs = pd.read_csv(
-            os.path.join(results_dir, "{}.digital_expression.{}genes.scde.diff_expr.csv".format(experiment, n_genes)), index_col=0
-        )
-        for d, name in [(degs, "_all_genes"), (degs[degs["Z"] > 0], "_up_genes"), (degs[degs["Z"] < 0], "_down_genes")]:
-
-            enr = enrichr(d.reset_index())
-            enr.to_csv(os.path.join(results_dir, "differential_expression.{}.{}.enrichr.csv".format(method, name)), index=False, encoding="utf8")
-
-            for gene_set_library in enr["gene_set_library"].unique():
-
-                p = enr[enr["gene_set_library"] == gene_set_library]
-                # p = p[p["adjusted_p_value"] < 0.05]
-
-                if p.shape[0] < 1:
-                    continue
-
-                p = p.sort_values("combined_score").tail(25)
-
-                print(gene_set_library)
-                fig, axis = plt.subplots(1)
-                sns.barplot(p["combined_score"], p["description"], orient="horiz", ax=axis)
-                axis.set_xlabel("Combined score")
-                sns.despine(fig)
-                fig.savefig(os.path.join(results_dir, "differential_expression.{}.{}.enrichr.{}.svg".format(method, name, gene_set_library)), bbox_inches="tight")
-
-        # Fig 1c
-        fig, axis = plt.subplots()
-        sns.distplot(abs(stats["Z"]), kde=False, bins=100, ax=axis)
-        # axis.set_yscale("log")
-        fig.savefig(os.path.join(results_dir, "differential_expression.{}.all_genes.posterior_distribution.svg".format(method)), bbox_inches="tight")
+    fig, axis = plt.subplots(1)
+    sns.barplot(data=p, y="description", x="combined_score", orient="horiz", hue="gene_set_library")
+    axis.set_xlabel("Combined score")
+    sns.despine(fig)
+    fig.savefig(os.path.join(results_dir, "differential_expression.{}.enrichr.top{}_terms.svg".format(method, n)), bbox_inches="tight")
 
 
-def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, method="pca", cond1="stimulated", cond2="unstimulated", percentile=99):
+def stimulation_signature(
+        df, df_bulk, de_genes,
+        experiment="CROP-seq_Jurkat_TCR", n_genes=500, method="pca", cond1="stimulated", cond2="unstimulated",
+        percentile=99, results_dir="results"):
     from scipy.stats import pearsonr, spearmanr
 
     def generate_signature_matrix(array, n=101, bounds=(0, 0)):
@@ -526,85 +464,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
         p_values = {i: x[1] for i, x in res.items()}
         return cors, p_values
 
-    if method == "scde":
-        # read in diff
-        degs = pd.read_csv(
-            os.path.join(results_dir, "{}.digital_expression.{}genes.scde.diff_expr.csv".format(experiment, n_genes)), index_col=0
-        )
-        degs[cond1] = np.log2(degs[cond1 + "_posterior"] + 1)
-        degs[cond2] = np.log2(degs[cond2 + "_posterior"] + 1)
-
-        # Filter out gRNAs
-        degs = degs[~degs.index.str.contains("library|CTRL")]
-
-        # get top N differential genes
-        de_genes = degs[abs(degs["cZ"]) > 2].index.tolist()
-        degs["sig"] = (abs(degs["cZ"]) > 2)
-        pd.Series(de_genes).to_csv("~/degenes.csv", index=False)
-        o_genes = df.index[~df.index.isin(de_genes)]
-        degs["A"] = np.log2(degs[cond1 + "_posterior"] * degs[cond2 + "_posterior"]) / 2.
-
-        # df2 = df[df.columns[df.columns.get_level_values('gene') == "CTRL"]]
-        # pos = df2[df.columns.get_level_values('condition') == "stimulated"].mean(0)
-        # neg = df2[df.columns.get_level_values('condition') == "unstimulated"].mean(0)
-
-        # Plot scatter of group posteriors
-        fig, axis = plt.subplots(1, figsize=(4, 4 * 1))
-        axis.scatter(  # all genes
-            degs[cond1].ix[o_genes],
-            degs[cond2].ix[o_genes],
-            s=5,
-            color="grey",
-            alpha=0.1
-        )
-        axis.scatter(
-            degs[cond1].ix[de_genes],
-            degs[cond2].ix[de_genes],
-            s=10,
-            color="orange",
-            alpha=0.5
-        )
-        axis.set_xlabel(cond1)
-        axis.set_ylabel(cond2)
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.scatter.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.scatter.svg".format(experiment, n_genes)), bbox_inches="tight")
-
-        fig, axis = plt.subplots(1, figsize=(4, 4 * 1))
-        # Plot MA
-        axis.scatter(  # all genes
-            degs.loc[o_genes, "A"],
-            degs.loc[o_genes, "Z"],
-            s=5,
-            color="grey",
-            alpha=0.1
-        )
-        axis.scatter(
-            degs.loc[de_genes, "A"],
-            degs.loc[de_genes, "Z"],
-            s=10,
-            color="orange",
-            alpha=0.5
-        )
-        axis.set_xlabel("A")
-        axis.set_ylabel("M {} vs {}".format(cond1, cond2))
-        sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.maplot.png".format(experiment, n_genes)), bbox_inches="tight", dpi=300)
-        fig.savefig(os.path.join(results_dir, "{}.{}genes.scde_dge.maplot.svg".format(experiment, n_genes)), bbox_inches="tight")
-
-    # if using pca genes
-    if method == "pca":
-        diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
-        de_genes = diff[abs(diff) > np.percentile(abs(diff), percentile)].index.tolist()
-
-    # Load bulk data
-    bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
-    bulk_df = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
-
-    # Match genes
-    bulk_df = bulk_df.ix[df.index].dropna()
-
-    for data_type, matrix in [("CROP", df), ("Bulk", bulk_df)]:
+    for data_type, matrix in [("CROP", df), ("Bulk", df_bulk)]:
         if data_type == "CROP":
             prefix = "{}.{}genes.{}".format(experiment, n_genes, method)
         else:
@@ -862,22 +722,22 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     # 3c. get signature value of each bulk sample
 
     # get signature matrix from bulk samples on the same genes
-    bulk_df_gene_means = bulk_df.T.groupby(level=["condition", "gene"]).median().T.ix[de_genes].dropna()
-    bx1 = bulk_df_gene_means[bulk_df_gene_means.columns[bulk_df_gene_means.columns.get_level_values("condition") == cond1]].median(axis=1)
+    df_bulk_gene_means = df_bulk.T.groupby(level=["condition", "gene"]).median().T.ix[de_genes].dropna()
+    bx1 = df_bulk_gene_means[df_bulk_gene_means.columns[df_bulk_gene_means.columns.get_level_values("condition") == cond1]].median(axis=1)
     bx1.name = cond1
-    bx2 = bulk_df_gene_means[bulk_df_gene_means.columns[bulk_df_gene_means.columns.get_level_values("condition") == cond2]].median(axis=1)
+    bx2 = df_bulk_gene_means[df_bulk_gene_means.columns[df_bulk_gene_means.columns.get_level_values("condition") == cond2]].median(axis=1)
     bx2.name = cond2
     bulk_sign_mat = generate_signature_matrix(np.vstack([bx1, bx2]).T, n=101, bounds=(-20, 20))
 
     bulk_cors = list()
     bulk_p_values = list()
-    for i, sample in enumerate(bulk_df.columns):
-        cor, p_value = best_signature_matrix(array=bulk_df[sample].ix[bulk_df_gene_means.index], matrix=bulk_sign_mat)
+    for i, sample in enumerate(df_bulk.columns):
+        cor, p_value = best_signature_matrix(array=df_bulk[sample].ix[df_bulk_gene_means.index], matrix=bulk_sign_mat)
         bulk_cors.append(cor)
         bulk_p_values.append(p_value)
 
-    bulk_cors = pd.DataFrame(bulk_cors, index=bulk_df.columns)
-    bulk_p_values = pd.DataFrame(bulk_p_values, index=bulk_df.columns)
+    bulk_cors = pd.DataFrame(bulk_cors, index=df_bulk.columns)
+    bulk_p_values = pd.DataFrame(bulk_p_values, index=df_bulk.columns)
 
     bulk_cors.to_csv(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_correlation.csv".format(experiment, n_genes)))
     bulk_p_values.to_csv(os.path.join(results_dir, "{}.{}genes.signature.Bulk.matrix_p_values.csv".format(experiment, n_genes)))
@@ -939,7 +799,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     # fits = fits.join(fits['x'].apply(pd.Series)).drop('x', axis=1).rename(columns={0: cond1, 1: cond2})
 
     # 5. investigate signatures
-    for data_type, matrix in [("CROP", df), ("Bulk", bulk_df)]:
+    for data_type, matrix in [("CROP", df), ("Bulk", df_bulk)]:
         if data_type == "CROP":
             index = ['condition', 'replicate', 'cell', 'grna', 'gene']
             cors = pd.read_csv(os.path.join(results_dir, "{}.{}genes.signature.{}.matrix_correlation.csv".format(experiment, n_genes, "all_cells")))
@@ -965,9 +825,9 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
 
         # reads per cell
         if data_type == "CROP":
-            s = exp_assigned.sum(axis=0)
+            s = df.sum(axis=0)
         elif data_type == "Bulk":
-            s = bitseq.sum(axis=0)
+            s = df_bulk.sum(axis=0)
         s.name = "reads_per_cell"
         sigs = pd.merge(sigs.reset_index(), s.reset_index()).set_index(index)
 
@@ -1241,7 +1101,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     # Start subsampling in 100 fractions of the data
     n_iter = 100
     rare_metrics = pd.DataFrame()
-    for i in range(1, n_iter):
+    for i in range(n_iter):
         for umi_fraction in np.linspace(0.0, 1.0, 100)[1:]:
             data_type = "CROP"
             index = ['condition', 'replicate', 'cell', 'grna', 'gene']
@@ -1253,7 +1113,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
                 # Compare aggregate signatures at both levels:
                 for level in ["gene", "grna"]:
 
-                    bulk_sigs_mean = bulk_sigs.ix[bulk_sigs.index[bulk_sigs.index.get_level_values("condition") == condition]].astype(float).groupby(level=['condition', level]).mean()
+                    bulk_sigs_mean = bulk_sigs.astype(float).groupby(level=['condition', level]).mean()
                     bulk_sigs_mean['signature'] = bulk_sigs_mean['signature'].replace(0, 1)  # to avoid -inf fold changes, could be done differently too
                     bulk_sigs_mean['data_type'] = "Bulk"
 
@@ -1261,7 +1121,7 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
                         print(i, umi_fraction, cell_fraction, condition, level)
                         total = sigs.shape[0]
                         # Subsample a fraction of all cells (maintains the distribution of recovered cells)
-                        chosen_indexes = np.random.choice(sigs.index[sigs.index.get_level_values("condition") == condition], int(np.round(cell_fraction * total)))
+                        chosen_indexes = np.random.choice(sigs.index, int(np.round(cell_fraction * total)))
 
                         sigs_mean = sigs.ix[chosen_indexes].astype(float).groupby(level=['condition', level]).mean()
                         sigs_mean['signature'] = sigs_mean['signature'].replace(0, 1)  # to avoid -inf fold changes, could be done differently too
@@ -1304,9 +1164,9 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     rare_metrics2 = rare_metrics[rare_metrics["cell_fraction"] == rare_metrics["cell_fraction"].max()].drop(["iteration", "cell_fraction"], axis=1)
 
     # cell states combined CI
-    g = sns.lmplot(
+    g = sns.factorplot(
         x="umi_fraction", y="pearson", row="level", hue="condition", data=rare_metrics2,
-        ci=.95, palette="colorblind")
+        ci=.95, palette="colorblind", s=1, alpha=0.8, figsize=(20, 10))
     for ax in g.axes.flat:
         ax.set_xlabel("Fraction of cells sampled")
         ax.set_ylabel("Correlation with RNA-seq of Bulk KO cell line")
@@ -1315,29 +1175,49 @@ def stimulation_signature(df, experiment="CROP-seq_Jurkat_TCR", n_genes=500, met
     g.savefig(os.path.join(results_dir, "{}.signature.rarefaction_analysis.{}_iterations.umi_sampling.combined_ci.svg".format(experiment, n_iter)), bbox_inches="tight")
 
     # Cell number and read subsampling
-    for level in rare_metrics["level"].drop_duplicates():
-        for condition in rare_metrics["condition"].drop_duplicates():
-
+    cmaps = ["viridis", "inferno", "Spectral_r", "GnBu", "Blues", "PuBuGn", "YlGnBu", "Greys"]
+    cmaps = ["Spectral_r", "YlGnBu"]
+    for cmap in cmaps:
+        fig, axis = plt.subplots(1, 2, figsize=(4 * 2, 3 * 1))
+        for i, level in enumerate(rare_metrics["level"].drop_duplicates()):
+            print(cmap, i)
             # make pivot
             rare_pivot = pd.pivot_table(
                 rare_metrics[(rare_metrics['level'] == level) & (rare_metrics['condition'] == condition)],
                 index="cell_fraction", columns="umi_fraction", values="pearson").sort_index(ascending=False)
 
-            fig, axis = plt.subplots(1)
-            sns.heatmap(rare_pivot, cmap="Spectral_r", vmin=0.4, vmax=1.0, ax=axis)
-            # plt.contour(rare_pivot, cmap="Spectral_r") # , interpolation='bilinear')
-            sns.despine(fig)
-            for item in axis.get_yticklabels():
-                item.set_rotation(0)
-            for item in axis.get_xticklabels():
-                item.set_rotation(90)
-            fig.savefig(os.path.join(
-                results_dir,
-                "{}.signature.rarefaction_analysis.{}_iterations.{}_level.{}.joint_sampling.heatmap.svg".format(
-                    experiment, n_iter, level, condition)), bbox_inches="tight")
+            from scipy import ndimage
+            data = ndimage.gaussian_filter(rare_pivot.fillna(rare_pivot.min().min()), sigma=3.0, order=0)
+
+            im1 = axis[i].imshow(
+                data,
+                cmap=cmap, vmin=0.0, vmax=1.0)
+            im2 = axis[i].contour(data, levels=np.linspace(0.5, 1.0, 11))  # np.logspace(-1, 0, 10, base=2)
+            for line in im2.ax.get_children():
+                try:
+                    line.set_color("black")
+                    line.set_linewidth(0.5)
+                except:
+                    continue
+            # axis[i].clabel(im2, inline=1, fontsize=10, colors="black", fmt="%.2f")
+            axis[i].set_xlim((8, 98))
+            axis[i].set_ylim((98, 0))
+
+        cbar = plt.colorbar(im1)
+        cbar.ax.set_ylabel('correlation to \n bulk RNA-seq')
+
+        sns.despine(fig, top=True, right=True, left=True, bottom=True)
+        fig.savefig(os.path.join(
+            results_dir, "..",
+            "{}.signature.rarefaction_analysis.{}_iterations.{}.joint_sampling.heatmap.{}.png".format(
+                experiment, n_iter, condition, cmap)), bbox_inches="tight", dpi=300)
+        fig.savefig(os.path.join(
+            results_dir, "..",
+            "{}.signature.rarefaction_analysis.{}_iterations.{}.joint_sampling.heatmap.{}.svg".format(
+                experiment, n_iter, condition, cmap)), bbox_inches="tight")
 
 
-def intra_variability():
+def intra_variability(df, df_bulk, de_genes, experiment="CROP-seq_Jurkat_TCR", results_dir="results"):
     """
     Measure between-gRNA, intra-gene variability
     """
@@ -1353,23 +1233,9 @@ def intra_variability():
     def z_score(x):
         return (x - x.mean()) / x.std()
 
-    # Load sc data
-    df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
-
-    # Load bulk data
-    bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
-    bulk_df = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
-
-    # Match genes
-    bulk_df = bulk_df.ix[df.index].dropna()
-
-    # Read in diff genes
-    diff = pd.read_csv(os.path.join(results_dir, "{}.differential_expression.{}.stimutation.csv".format(experiment, method)), squeeze=True, index_col=0, header=None, names=["gene_name"])
-    de_genes = diff[abs(diff) > np.percentile(abs(diff), 99)].index.tolist()
-
     # Pairwise distances between gRNAs
     results = pd.DataFrame()
-    for data_type, tmp_df in [("CROP", df), ("Bulk", bulk_df)]:
+    for data_type, tmp_df in [("CROP", df), ("Bulk", df_bulk)]:
         for subset, index in [("all_genes", df.index), ("sig_genes", de_genes)]:
 
             # groupby gRNA, reduce to median
@@ -1401,8 +1267,8 @@ def intra_variability():
                         series["relation"] = mask_name
                         results = results.append(series)
 
-    results.to_csv(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.csv".format(experiment)), index=False)
-    results = pd.read_csv(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.csv".format(experiment)))
+    results.to_csv(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.euc.csv".format(experiment)), index=False)
+    results = pd.read_csv(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.euc.csv".format(experiment)))
 
     # Test differences between type of gRNA pairs
     fig, axis = plt.subplots(1)
@@ -1410,7 +1276,7 @@ def intra_variability():
         lambda x: -np.log10(mannwhitneyu(x[x["relation"] == "intra"]["distances"], x[x["relation"] == "inter"]["distances"])[1])
     ).sort_values().plot(kind='bar', ax=axis)
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.p_values.svg".format(experiment)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.euc.p_values.svg".format(experiment)), bbox_inches="tight")
 
     # Test differences between data types
     fig, axis = plt.subplots(1)
@@ -1418,7 +1284,7 @@ def intra_variability():
         lambda x: -np.log10(mannwhitneyu(x[x["data_type"] == "CROP"]["distances"], x[x["data_type"] == "Bulk"]["distances"])[1])
     ).sort_values().plot(kind='bar', ax=axis)
     sns.despine(fig)
-    fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.euc.data_type.p_values.svg".format(experiment)), bbox_inches="tight")
+    fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.euc.data_type.p_values.svg".format(experiment)), bbox_inches="tight")
 
     # Plot distributions
     for sub_name in results["subset"].drop_duplicates():
@@ -1430,7 +1296,7 @@ def intra_variability():
         g.map(vertical_mean_line, "distances")
         g.add_legend()
         sns.despine(g.fig)
-        g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.euc.distplot.svg".format(experiment, sub_name)), bbox_inches="tight")
+        g.fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.euc.distplot.svg".format(experiment, sub_name)), bbox_inches="tight")
 
         # barplot
         g = sns.FacetGrid(data=results2, row="data_type", col="condition")
@@ -1438,18 +1304,18 @@ def intra_variability():
         g.map(vertical_mean_line, "distances")
         g.add_legend()
         sns.despine(g.fig)
-        g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.euc.barplot.svg".format(experiment, sub_name)), bbox_inches="tight")
+        g.fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.euc.barplot.svg".format(experiment, sub_name)), bbox_inches="tight")
 
         # barplot (CROP vs Bulk)
         fig, axis = plt.subplots(1)
         sns.barplot(data=results2, x="condition", y="distances", hue="data_type")
         sns.despine(fig)
-        fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.euc.barplot.svg".format(experiment, sub_name)), bbox_inches="tight")
+        fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.euc.barplot.svg".format(experiment, sub_name)), bbox_inches="tight")
 
         g = sns.FacetGrid(data=results2, row="data_type", col="condition")
         g.map(sns.violinplot, "relation", "distances")
         sns.despine(g.fig)
-        g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.euc.violinplot.svg".format(experiment, sub_name)), bbox_inches="tight")
+        g.fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.euc.violinplot.svg".format(experiment, sub_name)), bbox_inches="tight")
 
         # For each data type separately
         for data_type in results2['data_type'].drop_duplicates():
@@ -1462,7 +1328,7 @@ def intra_variability():
             g.map(sns.rugplot, "distances")
             g.add_legend()
             sns.despine(g.fig)
-            g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.distplot.gene_level.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
+            g.fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.{}.euc.distplot.gene_level.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
             # Call significantly variable genes (between gRNAs)
             # fit gaussian on pairwise distances between control gRNAs (null)
@@ -1472,7 +1338,7 @@ def intra_variability():
             # get p-values
             results3.loc[:, 'p_value'] = norm.sf(abs(z_scores), *params) * 2  # twosided p-value
             results3.loc[:, 'q_value'] = multipletests(results3.loc[:, 'p_value'], method="fdr_bh")[1]
-            results3.to_csv(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.csv".format(experiment, sub_name, data_type)), index=False)
+            results3.to_csv(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.csv".format(experiment, sub_name, data_type)), index=False)
 
             # combine p-values for each gene
             diff = results3.groupby(["condition", "gene"])['q_value'].apply(lambda x: combine_pvalues(x)[1]).reset_index()
@@ -1508,13 +1374,13 @@ def intra_variability():
             for i in diff.index:
                 axis.text(diff["distance_mean"].rank().ix[i], diff.ix[i]["distance_mean"], " ".join(i))
             sns.despine(fig)
-            fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.rank.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
+            fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.rank.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
             fig, axis = plt.subplots(1)
             sns.stripplot(x="gene", y="distances", hue="condition", data=results3.sort_values("distances"), ax=axis)
             axis.axhline(np.percentile(results3[results3['gene'] == "CTRL"]['distances'], 99))
             sns.despine(fig)
-            fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.stripplot.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
+            fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.stripplot.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
             # "Volcano plot"
             fig, axis = plt.subplots(1)
@@ -1522,13 +1388,13 @@ def intra_variability():
             for i in diff.index:
                 axis.text(diff.ix[i]["distance_mean"], diff.ix[i]["log_q_value"], " ".join(i))
             sns.despine(fig)
-            fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.volcano.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
+            fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.volcano.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
             # Vizualize all pairwise relationships
             if data_type == "Bulk":
                 diff = diff.drop("distance_std", axis=1)
             g = sns.pairplot(diff.dropna().reset_index(), hue="condition")
-            g.fig.savefig(os.path.join(results_dir, "..", "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.pairplot.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
+            g.fig.savefig(os.path.join(results_dir, "{}.intra_gene_variation_grna_level.{}.{}.euc.metrics.pairplot.svg".format(experiment, sub_name, data_type)), bbox_inches="tight")
 
 
 def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
@@ -1609,56 +1475,18 @@ def enrichr(dataframe, gene_set_libraries=None, kind="genes"):
     return results
 
 
-def inspect_bulk():
+def inspect_bulk(df, df_bulk, de_genes, de_genes_bulk):
     """
     """
-    # read in CROP expression matrix
-    exp_matrix = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
-
-    # read gene expression matrix
-    bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
-    bitseq = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
-
-    # read in diff genes
-    degs = pd.read_csv(
-        os.path.join(results_dir, "{}.digital_expression.{}genes.scde.diff_expr.csv".format(experiment, n_genes)), index_col=0
-    )
-    # remove gRNAs
-    degs = degs[~degs.index.str.contains("library|CTRL")]
-    # remove ribosomal, mitochondrial genes
-    degs = degs[~((degs.index.str.contains("^RP")) | (degs.index.str.contains("^MRP")) | (degs.index.str.contains("^MT-")))]
-    de_genes = degs[abs(degs["cZ"]) > 2].index.tolist()
-
-    # read in diff genes from Bulk
-    degs = pd.read_csv(
-        os.path.join(results_dir, "bulk", "deseq_esat_CTRL_samples_stimulation_signature.diff.csv"), index_col=0
-    )
-    de_genes_bulk = degs[degs["padj"] < 0.05].index.tolist()
-
-    quant_types = [("bitseq", bitseq)]
+    quant_types = [("bitseq", df_bulk)]
 
     for quant_type, exp_matrix in quant_types:
         print(quant_type)
-        # exp_matrix = exp_matrix.ix[matrix_norm.index].dropna()
-        # matrix_norm = matrix_norm.ix[exp_matrix.index].dropna()
-        # de_genes = [x for x in de_genes if x in exp_matrix.index]
 
         # Boxplots of expression
         fig, axis = plt.subplots(1)
         sns.boxplot(data=pd.melt(exp_matrix), x="grna", y="value", hue="condition", ax=axis)
         fig.savefig(os.path.join("results", "bulk", "bulk_samples.qc.{}.expression_boxplots.png".format(quant_type)), dpi=300, bbox_inches="tight")
-
-        # # Pairwise correlations
-        # g = sns.clustermap(
-        #     exp_matrix.corr(),
-        #     row_cluster=True, col_cluster=True,
-        #     xticklabels=True, yticklabels=True,
-        #     figsize=(15, 15))
-        # for item in g.ax_heatmap.get_yticklabels():
-        #     item.set_rotation(0)
-        # for item in g.ax_heatmap.get_xticklabels():
-        #     item.set_rotation(90)
-        # g.fig.savefig(os.path.join("results", "bulk", "bulk_samples.qc.{}.correlation.png".format(quant_type)), dpi=300, bbox_inches="tight")
 
         # Heatmap and correlation on signature genes
         # derived from bulk
@@ -1688,7 +1516,7 @@ def inspect_bulk():
             g.fig.savefig(os.path.join("results", "bulk", "bulk_samples.qc.{}.{}.correlation.png".format(quant_type, geneset)), dpi=300, bbox_inches="tight")
 
 
-def compare_bulk(cond1="stimulated", cond2="unstimulated"):
+def compare_bulk(df, df_bulk, de_genes, experiment="CROP-seq_Jurkat_TCR", cond1="stimulated", cond2="unstimulated"):
     """
     Compare Bulk RNA-seq data with single-cell
     """
@@ -1702,29 +1530,6 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
     def n_cells(x):
         return x.shape[1], pd.np.nan
 
-    experiment = "CROP-seq_Jurkat_TCR"
-
-    # read in CROP expression matrix
-    single_exp_matrix = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
-    # match grna names with Bulk
-    single_exp_matrix.columns = single_exp_matrix.columns.set_levels([single_exp_matrix.columns.levels[3].str.replace(".*library_", "")], level=[3])
-
-    # read gene expression matrix
-    bulk_exp_matrix = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
-    bulk_exp_matrix = np.log2(1 + bulk_exp_matrix.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
-
-    # align indices
-    single_exp_matrix = single_exp_matrix.ix[bulk_exp_matrix.index].dropna()
-    bulk_exp_matrix = bulk_exp_matrix.ix[single_exp_matrix.index].dropna()
-
-    # read in diff genes
-    degs = pd.read_csv(
-        os.path.join(results_dir, "{}.digital_expression.{}genes.scde.diff_expr.csv".format(experiment, n_genes)), index_col=0
-    )
-    degs = degs[~degs.index.str.contains("library|CTRL")]
-    de_genes = degs[abs(degs["cZ"]) > 2].index.tolist()
-    de_genes = [x for x in de_genes if x in bulk_exp_matrix.index]
-
     # Tasks:
 
     # -1) Correlate Bulk and grna/gene level aggregated
@@ -1735,40 +1540,36 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
     # 3). Compare signature (recall, agreement)
     # 4). Compare differential genes in KO vs CTRL (recall, agreement, enrichemnts)
     # x). Each single-cell vs Bulk
-    single_quant_types = [("sc", single_exp_matrix)]
+    single_quant_types = [("sc", df)]
 
-    bulk_quant_types = [("bitseq", bulk_exp_matrix)]
-
-
-    # -1)
-
+    bulk_quant_types = [("bitseq", df_bulk)]
 
     # 0).
-    for i, condition in enumerate(matrix_norm.columns.get_level_values('condition').drop_duplicates()):
+    for i, condition in enumerate(df.columns.get_level_values('condition').drop_duplicates()):
         fig, axis = plt.subplots(5, 5, figsize=(5 * 3, 5 * 3))
         axis = iter(axis.flatten())
-        for gene_group, gene_filter in [("all_genes", single_exp_matrix.index), ("de_genes", de_genes)]:
-            for single_quant_type, single_exp_matrix in single_quant_types:
-                for bulk_quant_type, bulk_exp_matrix in bulk_quant_types:
+        for gene_group, gene_filter in [("all_genes", df.index), ("de_genes", de_genes)]:
+            for single_quant_type, df in single_quant_types:
+                for bulk_quant_type, df_bulk in bulk_quant_types:
                     # remove gRNAs
-                    single_exp_matrix = single_exp_matrix[~single_exp_matrix.index.str.contains("library|CTRL")]
+                    df = df[~df.index.str.contains("library|CTRL")]
 
                     # remove ribosomal, mitochondrial genes
-                    single_exp_matrix = single_exp_matrix[(~single_exp_matrix.index.str.contains("^RP.*")) & (~single_exp_matrix.index.str.contains("^MT-"))]
-                    bulk_exp_matrix = bulk_exp_matrix[(~bulk_exp_matrix.index.str.contains("^RP.*")) & (~bulk_exp_matrix.index.str.contains("^MT-"))]
+                    df = df[(~df.index.str.contains("^RP.*")) & (~df.index.str.contains("^MT-"))]
+                    df_bulk = df_bulk[(~df_bulk.index.str.contains("^RP.*")) & (~df_bulk.index.str.contains("^MT-"))]
 
                     # align indices
-                    single_exp_matrix = single_exp_matrix.ix[bulk_exp_matrix.index].dropna()
-                    bulk_exp_matrix = bulk_exp_matrix.ix[single_exp_matrix.index].dropna()
-                    de_genes = [x for x in de_genes if x in bulk_exp_matrix.index]
+                    df = df.ix[df_bulk.index].dropna()
+                    df_bulk = df_bulk.ix[df.index].dropna()
+                    de_genes = [x for x in de_genes if x in df_bulk.index]
 
-                    a = single_exp_matrix[single_exp_matrix.columns[
-                        (single_exp_matrix.columns.get_level_values('condition') == condition) &
-                        (single_exp_matrix.columns.get_level_values('gene') == "CTRL")]].median(axis=1).ix[gene_filter].dropna()
+                    a = df[df.columns[
+                        (df.columns.get_level_values('condition') == condition) &
+                        (df.columns.get_level_values('gene') == "CTRL")]].median(axis=1).ix[gene_filter].dropna()
 
-                    b = bulk_exp_matrix[bulk_exp_matrix.columns[
-                        (bulk_exp_matrix.columns.get_level_values('condition') == condition) &
-                        (bulk_exp_matrix.columns.get_level_values('gene') == "CTRL")]].median(axis=1).ix[gene_filter].dropna()
+                    b = df_bulk[df_bulk.columns[
+                        (df_bulk.columns.get_level_values('condition') == condition) &
+                        (df_bulk.columns.get_level_values('gene') == "CTRL")]].median(axis=1).ix[gene_filter].dropna()
 
                     ax = axis.next()
                     ax.scatter(a, b, alpha=0.75, s=3)
@@ -1783,32 +1584,32 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
     # 1). & 2).
     # Run
     comparisons = pd.DataFrame()
-    for gene_group, gene_filter in [("all_genes", bulk_exp_matrix.index)]:
+    for gene_group, gene_filter in [("all_genes", df_bulk.index)]:
         # At gene level or at grna level
         for level in ["gene", "grna"]:
             # fig, axis = plt.subplots(
-            #     len(single_exp_matrix.columns.get_level_values('condition').drop_duplicates()),
-            #     len(single_exp_matrix.columns.get_level_values(level).drop_duplicates()),
+            #     len(df.columns.get_level_values('condition').drop_duplicates()),
+            #     len(df.columns.get_level_values(level).drop_duplicates()),
             #     figsize=(
-            #         4 * len(single_exp_matrix.columns.get_level_values(level).drop_duplicates()),
-            #         4 * len(single_exp_matrix.columns.get_level_values('condition').drop_duplicates())
+            #         4 * len(df.columns.get_level_values(level).drop_duplicates()),
+            #         4 * len(df.columns.get_level_values('condition').drop_duplicates())
             #     ), sharex=True, sharey=True
             # )
             q = pd.DataFrame()
-            for i, condition in enumerate(single_exp_matrix.columns.get_level_values('condition').drop_duplicates()):
+            for i, condition in enumerate(df.columns.get_level_values('condition').drop_duplicates()):
                 # Compare within each knockout
-                for j, ko in enumerate(single_exp_matrix.columns.get_level_values(level).drop_duplicates()):
+                for j, ko in enumerate(df.columns.get_level_values(level).drop_duplicates()):
                     print(gene_group, level, condition, ko)
 
-                    s = single_exp_matrix.columns[(single_exp_matrix.columns.get_level_values("condition") == condition) & (single_exp_matrix.columns.get_level_values(level) == ko)]
-                    b = bulk_exp_matrix.columns[(bulk_exp_matrix.columns.get_level_values("condition") == condition) & (bulk_exp_matrix.columns.get_level_values(level) == ko)]
+                    s = df.columns[(df.columns.get_level_values("condition") == condition) & (df.columns.get_level_values(level) == ko)]
+                    b = df_bulk.columns[(df_bulk.columns.get_level_values("condition") == condition) & (df_bulk.columns.get_level_values(level) == ko)]
 
                     if b.shape[0] == 0 or s.shape[0] == 0:
                         continue
 
-                    single_cell = single_exp_matrix[s]
+                    single_cell = df[s]
                     sm = single_cell.median(axis=1).ix[gene_filter]
-                    bulk = bulk_exp_matrix[b]
+                    bulk = df_bulk[b]
                     bm = bulk.median(axis=1).ix[gene_filter]
 
                     q['{} {} {}'.format("single_cell", condition, ko)] = sm
@@ -1844,9 +1645,9 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
             # heatmap with metrics
             fig, axis = plt.subplots(
                 len(comparisons2["metric"].drop_duplicates()),
-                len(single_exp_matrix.columns.get_level_values('condition').drop_duplicates()),
+                len(df.columns.get_level_values('condition').drop_duplicates()),
             )
-            for i, condition in enumerate(single_exp_matrix.columns.get_level_values('condition').drop_duplicates()):
+            for i, condition in enumerate(df.columns.get_level_values('condition').drop_duplicates()):
                 for j, metric in enumerate(comparisons2["metric"].drop_duplicates()):
                     pivot = pd.pivot_table(comparisons2[
                         (comparisons2["gene_group"] == gene_group) &
@@ -1878,9 +1679,9 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
         print(level)
         markers = ["CD69", "CD82", "PDCD1", "CD38", "BCL7A", "CDC20", "TUBB", "ADA", "TUBA1B"]
 
-        sm = single_exp_matrix.T.groupby(level=['condition', level]).mean()[markers]
+        sm = df.T.groupby(level=['condition', level]).mean()[markers]
         sm["data_type"] = "single_cell"
-        bm = bulk_exp_matrix.T.groupby(level=['condition', level]).mean()[markers]
+        bm = df_bulk.T.groupby(level=['condition', level]).mean()[markers]
         # bm = bm.apply(lambda x: (x - x.mean()) / x.std(), axis=0)
         bm["data_type"] = "bulk"
         bm = bm.ix[sm.index].dropna()
@@ -1902,13 +1703,13 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
         g.fig.savefig(os.path.join("results", "bulk", "bulk_single-cell_comparison.marker_genes.stripplot.techniq_together.{}.png".format(level)), dpi=300, bbox_inches="tight")
 
         fig, axis = plt.subplots(
-            len(single_exp_matrix.columns.get_level_values('condition').drop_duplicates()),
+            len(df.columns.get_level_values('condition').drop_duplicates()),
             len(markers),
             figsize=(
                 4 * len(markers),
-                4 * len(single_exp_matrix.columns.get_level_values('condition').drop_duplicates()))
+                4 * len(df.columns.get_level_values('condition').drop_duplicates()))
         )
-        for i, condition in enumerate(single_exp_matrix.columns.get_level_values('condition').drop_duplicates()):
+        for i, condition in enumerate(df.columns.get_level_values('condition').drop_duplicates()):
             for j, marker in enumerate(markers):
                 axis[i][j].scatter(sm.loc[condition, marker], bm.loc[condition, marker])
                 axis[i][j].set_title("{} {}".format(condition, marker))
@@ -1926,8 +1727,8 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
         return overlap, recall
 
     performance = pd.DataFrame()
-    for i, condition in enumerate(bulk_exp_matrix.columns.levels[1]):
-        for j, ko in enumerate(bulk_exp_matrix.columns.levels[2]):
+    for i, condition in enumerate(df_bulk.columns.levels[1]):
+        for j, ko in enumerate(df_bulk.columns.levels[2]):
             print(condition, ko)
             # get differential
             # read in single
@@ -1984,7 +1785,7 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
                         index=["condition", "ko", "threshold", "method", "sc_size", "bulk_size", "overlap", "recall", "gold_overlap", "gold_recall"]), ignore_index=True)
     performance.to_csv(os.path.join("results", "bulk", "bulk_single-cell_comparison.diff_genes.performance.csv"))
 
-    for i, condition in enumerate(bitseq.columns.levels[1]):
+    for i, condition in enumerate(df_bulk.columns.levels[1]):
         for method in ["top250", "pvalue"]:
             # Plot recall of both
             pivot = pd.pivot_table(performance[
@@ -2008,8 +1809,8 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
     # Get enrichments
     n_top_genes = 500
     # save text file with gene names
-    for i, condition in enumerate(bitseq.columns.levels[1]):
-        for j, ko in enumerate(bitseq.columns.levels[2]):
+    for i, condition in enumerate(df_bulk.columns.levels[1]):
+        for j, ko in enumerate(df_bulk.columns.levels[2]):
             print(condition, ko)
             # get differential
             # read in single
@@ -2051,8 +1852,8 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
 
     # collect
     enrichments = pd.DataFrame()
-    for i, condition in enumerate(bitseq.columns.levels[1]):
-        for j, ko in enumerate(bitseq.columns.levels[2]):
+    for i, condition in enumerate(df_bulk.columns.levels[1]):
+        for j, ko in enumerate(df_bulk.columns.levels[2]):
             print(condition, ko)
             # get differential
             # read in single
@@ -2076,7 +1877,7 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
 
     enrichments.to_csv(os.path.join("results", "bulk", "enrichr", "all_comparisons.{}topgenes.enrichr.csv".format(n_top_genes)), index=False)
 
-    for i, condition in enumerate(bitseq.columns.levels[1]):
+    for i, condition in enumerate(df_bulk.columns.levels[1]):
         for gene_set_library in enrichments['gene_set_library'].drop_duplicates():
             print(condition, gene_set_library)
             # pivot
@@ -2111,15 +1912,12 @@ def compare_bulk(cond1="stimulated", cond2="unstimulated"):
                 continue
 
 
-def flow_analysis():
+def flow_analysis(df, flow_df):
     """
     """
     from FlowCytometryTools import FCMeasurement
     from FlowCytometryTools import ThresholdGate, PolyGate
     from scipy.stats import pearsonr, spearmanr
-
-    flow = pd.read_csv(os.path.join("metadata", "flow_analysis.csv"))
-    flow = flow[flow["failed"] != True]
 
     #
 
@@ -2130,7 +1928,7 @@ def flow_analysis():
     df_t = df.T
 
     # Each marker separately, both conditions together
-    condition_dict = dict(zip(flow['condition'].drop_duplicates().tolist()[::-1], sns.color_palette("colorblind") * 10))
+    condition_dict = dict(zip(flow_df['condition'].drop_duplicates().tolist()[::-1], sns.color_palette("colorblind") * 10))
 
     for marker in marker_gene_mapping.keys():
         for level in ["gene", "grna"]:
@@ -2139,12 +1937,12 @@ def flow_analysis():
 
                 facs_means = dict()
                 scRNA_means = dict()
-                for i, condition in enumerate(flow['condition'].drop_duplicates()):
-                    for level_value in flow[flow['condition'] == condition][level].drop_duplicates():
+                for i, condition in enumerate(flow_df['condition'].drop_duplicates()):
+                    for level_value in flow_df[flow_df['condition'] == condition][level].drop_duplicates():
                         if metric == "%+cells":
-                            facs_mean = flow[(flow['condition'] == condition) & (flow[level] == level_value)]["%{}+".format(marker)].squeeze().mean()
+                            facs_mean = flow_df[(flow_df['condition'] == condition) & (flow_df[level] == level_value)]["%{}+".format(marker)].squeeze().mean()
                         else:
-                            facs_mean = flow[(flow['condition'] == condition) & (flow[level] == level_value)]["{} gMFI".format(marker)].squeeze().mean()
+                            facs_mean = flow_df[(flow_df['condition'] == condition) & (flow_df[level] == level_value)]["{} gMFI".format(marker)].squeeze().mean()
                         if (level == "grna") and (~level_value.startswith("CTRL")):
                             level_value = "Tcrlibrary_" + level_value
                         scRNA_mean = df_t.ix[
@@ -2177,8 +1975,8 @@ def flow_analysis():
     fig1, axis1 = plt.subplots(8, 12, sharex=True, sharey=True, figsize=(12 * 2, 8 * 2))
     fig2, axis2 = plt.subplots(8, 12, sharex=True, sharey=True, figsize=(12 * 2, 8 * 2))
     fcs_cells = dict()
-    for i, fcs_file in enumerate(flow['fcs_file']):
-        if (flow.loc[flow['fcs_file'] == fcs_file, "failed"]).squeeze() is True:
+    for i, fcs_file in enumerate(flow_df['fcs_file']):
+        if (flow_df.loc[flow_df['fcs_file'] == fcs_file, "failed"]).squeeze() is True:
             continue
         sample = FCMeasurement(ID=fcs_file, datafile=os.path.join("flow_data", fcs_file))
 
@@ -2221,8 +2019,8 @@ def flow_analysis():
 
         axis0.flat[i].set_xlim((0, 250e3))
         axis0.flat[i].set_xlim((0, 150000))
-        condition = (flow.loc[flow['fcs_file'] == fcs_file, "condition"]).squeeze()
-        grna = (flow.loc[flow['fcs_file'] == fcs_file, "grna"]).squeeze()
+        condition = (flow_df.loc[flow_df['fcs_file'] == fcs_file, "condition"]).squeeze()
+        grna = (flow_df.loc[flow_df['fcs_file'] == fcs_file, "grna"]).squeeze()
         axis0.flat[i].set_title("{} - {}".format(condition, grna))
         axis1.flat[i].set_title("{} - {}".format(condition, grna))
         axis2.flat[i].set_title("{} - {}".format(condition, grna))
@@ -2240,116 +2038,92 @@ def flow_analysis():
     fig2.savefig(os.path.join("results", "flow", "flow.all_samples.FSCA_LD.png"), bbox_inches="tight", dpi=300)
 
 
-prj = Project(os.path.join("metadata", "config.yaml"))
-prj.add_sample_sheet()
-prj.paths.results_dir = results_dir = os.path.join("results")
+def main():
 
-sample_annotation = prj.sheet.df
+    prj = Project(os.path.join("metadata", "config.yaml"))
+    prj.add_sample_sheet()
+    prj.paths.results_dir = results_dir = os.path.join("results")
 
-# get guide annotation
-guide_annotation = os.path.join("metadata", "guide_annotation.csv")
-guide_annotation = pd.read_csv(guide_annotation)
+    # get guide annotation
+    guide_annotation = os.path.join("metadata", "guide_annotation.csv")
+    guide_annotation = pd.read_csv(guide_annotation)
 
-n_genes = 500
-experiment = prj.sheet.df['experiment'].drop_duplicates()[4]
-method = "pca"
+    # get expression
+    for experiment in prj.sheet.df['experiment'].dropna().drop_duplicates():
+        for n_genes in [500]:
+            print(experiment, n_genes)
 
-# get expression
-for n_genes in [500]:
-    for experiment in prj.sheet.df['experiment'].drop_duplicates():
-        print(experiment)
+            # Read in digital expression and add pd.MultiIndex with metadata
+            counts_file = os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes))
+            exp_assigned = pd.read_hdf(counts_file, "exp_matrix", compression="gzip")
+            exp_assigned = exp_assigned.T.reset_index()
+            exp_assigned['replicate'] = exp_assigned['replicate'].astype(np.int64).astype(str)
+            exp_assigned['gene'] = pd.np.nan
+            exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, "grna"].str.split("_")).apply(lambda x: x[1])
+            exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, "grna"].str.split("_")).apply(lambda x: x[2])
+            exp_assigned.loc[exp_assigned['grna'].str.contains("CTRL"), 'gene'] = "CTRL"
+            exp_assigned = exp_assigned.set_index(['condition', 'replicate', 'cell', 'grna', 'gene'])
+            exp_assigned = exp_assigned.T
 
-        counts_file = os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes))
-        exp_assigned = pd.read_hdf(counts_file, "exp_matrix", compression="gzip")
-        exp_assigned = exp_assigned.T.reset_index()
-        exp_assigned['replicate'] = exp_assigned['replicate'].astype(np.int64).astype(str)
-        exp_assigned['gene'] = pd.np.nan
-        exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 3, "grna"].str.split("_")).apply(lambda x: x[1])
-        exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, 'gene'] = pd.Series(exp_assigned.loc[pd.Series(exp_assigned['grna'].str.split("_")).apply(len) == 4, "grna"].str.split("_")).apply(lambda x: x[2])
-        exp_assigned.loc[exp_assigned['grna'].str.contains("CTRL"), 'gene'] = "CTRL"
-        exp_assigned = exp_assigned.set_index(['condition', 'replicate', 'cell', 'grna', 'gene'])
-        exp_assigned = exp_assigned.T
+            # Normalize data
+            matrix_norm = normalize(exp_assigned, experiment=experiment, kind="total")
+            matrix_norm = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
 
-        # exp_assigned.columns = exp_assigned.columns.set_levels([exp_assigned.columns.levels[:-1], exp_assigned.columns.levels[-1].astype(str)])
+            # Filtering/Cleanup
+            # remove lowly expressed genes
+            df = matrix_norm[matrix_norm.sum(1) > 10]
+            # remove gRNAs
+            df = df[~df.index.str.contains("library|CTRL")]
+            # remove ribosomal, mitochondrial genes
+            df = df[~((df.index.str.contains("^RP")) | (df.index.str.contains("^MRP")) | (df.index.str.contains("^MT-")))]
+            # remove gRNAs targeting essential genes
+            df = df[df.columns[~df.columns.get_level_values("gene").isin(["DHODH", "MVD", "TUBB"])]]
+            df.to_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
+            df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
 
-        # Normalize
-        # Approach 1:
-        # normalize by total
-        matrix_norm = normalize(exp_assigned, experiment=experiment, kind="total")
-        matrix_norm = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
+            # Load bulk RNA-seq data
+            bitseq = pd.read_csv(os.path.join("results", "{}.count_matrix.gene_level.csv".format(experiment)), index_col=[0], header=range(4))
+            df_bulk = np.log2(1 + bitseq.apply(lambda x: x / float(x.sum()), axis=0) * 1e4)
+            df_bulk = df_bulk.ix[df.index].dropna()  # match quantifyied genes with CROP-seq
 
-        # Approach 2:
-        # regress out based on total number and MT-genes using Seurat
-        # matrix_norm = normalize(counts_file, kind="seurat")
+            # Unsupervised analysis
+            # apply dimentionality reduction methods/clustering
+            # and discover biological axis related with stimulation
+            unsupervised(df, experiment=experiment)
+            # recover genes most associated with it
+            diff = differential_genes(df, method="pca", experiment=experiment)
+            de_genes = diff[abs(diff) > np.percentile(abs(diff), 99)].index.tolist()
+            # examine their enrichments
+            enrich_signature(experiment=experiment, n_genes=n_genes, method="pca")
 
-        # hdf5_file = os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.seurat_regressed.hdf5.gz".format(experiment, n_genes))
-        # matrix_norm = read_seurat_hdf5(hdf5_file)
+            # investigate intra-gene, inter-grna variability transcriptome-wide or in signature only
+            intra_variability(df, df_bulk, de_genes, experiment=experiment)
 
-        # Filtering/Cleanup
-        # remove lowly expressed genes
-        df = matrix_norm[matrix_norm.sum(1) > 10]
+            # Test significance of perturbations transcriptome-wide or in signature only
+            significant_perturbation(df, df_bulk, diff, experiment=experiment)
 
-        # remove gRNAs
-        df = df[~df.index.str.contains("library|CTRL")]
+            # visualize signature and make signature position assignments per cell/gRNA/gene
+            stimulation_signature(df, df_bulk, de_genes, experiment=experiment)
 
-        # remove ribosomal, mitochondrial genes
-        df = df[~((df.index.str.contains("^RP")) | (df.index.str.contains("^MRP")) | (df.index.str.contains("^MT-")))]
+            # Compare with bulk RNA-seq
+            # read in diff genes from bulk
+            degs = pd.read_csv(os.path.join(results_dir, "bulk", "deseq_bitseq_CTRL_samples_stimulation_signature.diff.csv"), index_col=0)
+            de_genes_bulk = degs[degs["padj"] < 0.05].index.tolist()
+            # first inspect bulk data
+            inspect_bulk(df, df_bulk, de_genes, de_genes_bulk)
+            # now compare
+            compare_bulk(df, experiment="CROP-seq_Jurkat_TCR")
 
-        # remove Essential genes
-        df = df[df.columns[~df.columns.get_level_values("gene").isin(["DHODH", "MVD", "TUBB"])]]
-        df.to_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
-        df = pd.read_hdf(os.path.join(results_dir, "digital_expression.500genes.{}.log2_tpm.filtered.hdf5.gz".format(experiment)), "log2_tpm", compression="gzip")
+            # Compare with FACS measurements
+            # read in FACS data
+            flow_df = pd.read_csv(os.path.join("metadata", "flow_analysis.csv"))
+            flow_df = flow_df[flow_df["failed"] != True]
+            flow_analysis(df, flow_df)
 
-        # Unsupervised
 
-        # Approach 1:
-        # apply dimentionality reduction methods/clustering
-        # and discover biological axis related with stimulation
-        unsupervised(df)
-        differential_genes(df, experiment=experiment, method="pca")
-        enrich_signature(method="pca")
-
-        # bonus:
-        # investigate intra-gene, inter-grna variability
-        intra_variability()
-
-        # Approach 2 (just a bit supervised though):
-        # get differential genes between conditions from CTRL cells only
-        # use this signature to position each cell
-        # observe deviation of groups of cells with gRNA targeting the same
-        # gene coming from either condition to the mean
-
-        # variant A:
-
-        # get differential genes with some method
-        # differential_genes(df, experiment=experiment, method="scde")  # <- todo: add scde R code wrapped here
-
-        # visualize signature and make signature position assignments per cell/gRNA/gene
-        stimulation_signature(df, method="pca")
-
-        # Compare with FACS measurements
-        inspect_bulk()
-        compare_bulk(matrix_norm)
-        flow_analysis()
-
-        # Part 2.
-        # Explore the knockouts!
-
-        #
-
-        # A.
-        # Groupby condition/gene, get mean expression
-        # Plot difference/deviation from CTRL for genes:
-        # a) of the relevant pathway or
-        # b) any differentially expressed gene from the one vs all or one vs CTRL comparisons.
-        # b1) with MannU test
-        # explore_knockouts(matrix_norm.to_dense(), assignment, prefix=prefix)
-        # b2) with scde
-        # gather_scde()
-        # explore_knockouts_scde()
-
-        # Plot the difference between stimulated/unstimulated for same genes
-
-        # B.
-        # Get enrichments for all DEGs from the one vs all or one vs CTRL comparisons.
-        # Plot knockout vs enrichment
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("Program canceled by user!")
+        sys.exit(1)

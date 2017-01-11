@@ -1,0 +1,14 @@
+-e git+https://github.com/epigen/looper.git@dev#egg=looper
+-e git+https://github.com/epigen/pypiper.git@dev#egg=pypiper
+# -e git+https://github.com/epigen/pipelines.git@dev#egg=pipelines
+
+argparse
+FlowCytometryTools
+h5py
+matplotlib
+numpy
+pandas>=0.16
+scikit-learn==0.17
+scipy
+seaborn
+statsmodels
