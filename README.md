@@ -4,7 +4,7 @@ Paul Datlinger, André F Rendeiro<sup>\*</sup>, Christian Schmidl<sup>\*</sup>, 
 
 <sup>\*</sup>These authors contributed equally to this work
 
-**Paper**: [http://dx.doi.org/](http://dx.doi.org/)
+**Paper**: [http://dx.doi.org/10.1038/nmeth.4177](http://dx.doi.org/10.1038/nmeth.4177)
 
 **Website**: [crop-seq.computational-epigenetics.org](http://crop-seq.computational-epigenetics.org)
 
