@@ -11,6 +11,7 @@ Paul Datlinger, André F Rendeiro<sup>\*</sup>, Christian Schmidl<sup>\*</sup>, 
 **Website**: [crop-seq.computational-epigenetics.org](http://crop-seq.computational-epigenetics.org)
 
 This repository contains scripts used in the analysis of the data in the paper.
+Future updates will be shared at https://github.com/epigen/crop-seq/.
 
 <br>
 
