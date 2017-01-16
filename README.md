@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.247473.svg)](https://doi.org/10.5281/zenodo.247473)
+
 ## Pooled CRISPR screening with single-cell transcriptome read-out
 
 Paul Datlinger, André F Rendeiro<sup>\*</sup>, Christian Schmidl<sup>\*</sup>, Thomas Krausgruber, Peter Traxler, Johanna Klughammer, Linda C Schuster, Amelie Kuchler, Donat Alpar, Christoph Bock. (2017) Nature Methods. doi:10.1038/nmeth.4177
