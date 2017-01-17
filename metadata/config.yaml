@@ -15,8 +15,8 @@ paths:
   # submission: where cluster submit scripts and log files will go
   results_subdir: results_pipeline
   submission_subdir: submission
-  # pipelines_dir: ABSOLUTE PATH the directory where the Looper will find pipeline
-  # scripts (and accompanying pipeline config files) for submission.
+  # pipelines_dir: ABSOLUTE PATH the directory where the Looper will find the pipelines repository
+  # replace with yours:
   pipelines_dir: /home/arendeiro/workspace/pipelines
 
 metadata:
@@ -35,8 +35,8 @@ data_sources:
   # entries correspond to values in the data_source column in sample_annotation table
   # {variable} can be used to replace environment variables or other sample_annotation columns
   # If you use {variable} codes, you should quote the field so python can parse it.
-  bsf_samples: "/scratch/lab_bsf/samples/{flowcell}/{flowcell}_{lane}_samples/{flowcell}_{lane}#{BSF_name}.bam"
-  bsf_samples_ND: "/scratch/lab_bsf/samples/{demultiplex_run}/{flowcell}_{lane}_samples/{flowcell}_{lane}#{BSF_name}.bam"
+  # replace with a regex leading to path of raw data (unaligned bam files):
+  bsf_samples: "/example/path/to/data/{var1}/{var1}_{var2}_{var3}.bam"
 
 genomes:
   human: hg38
@@ -59,8 +59,8 @@ compute:
   submission_template: templates/slurm_template.sub
   submission_command: sbatch
   # To run on the localhost:
-  #submission_template: templates/localhost_template.sub
-  #submission_command: sh
+  # submission_template: templates/localhost_template.sub
+  # submission_command: sh
 
 
 pipeline_config:
@@ -70,16 +70,10 @@ pipeline_config:
   # Or you can point to a specific config to be used in this project:
   dropseq.py: pipeline_config.yaml
 
-trackhubs:
-  trackhub_dir: /scratch/lab_bock/shared/projects/crop-seq/trackhubs
-  # url: if you include this, the make_trackhubs will produce a link to your track hub in the project folder.
-  url: https://medical-epigenomics.org/bocklab/arendeiro/crop-seq/
-
 username: arendeiro
 email: arendeiro@cemm.at
 
 # CROP-seq plasmid sequences
-# (CROPSEQ and Cas9+Blasticidin plasmids)
 crop-seq:
   u6: "GAGGGCCTATTTCCCATGATTCCTTCATATTTGCATATACGATACAAGGCTGTTAGAGAGATAATTAGAATTAATTTGACTGTAAACACAAAGATATTAGTACAAAATACGTGACGTAGAAAGTAATAATTTCTTGGGTAGTTTGCAGTTTTAAAATTATGTTTTAAAATGGACTATCATATGCTTACCGTAACTTGAAAGTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCG"
   rest: "GTTTTAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTAAGCTTGGCGTAACTAGATCTTGAGACACTGCTTTTTGCTTGTACTGGGTCTCTCTGGTTAGACCAGATCTGAGCCTGGGAGCTCTCTGGCTAACTAGGGAACCCACTGCTTAAGCCTCAATAAAGCTTGCCTTGAGTGCTTCAAGTAGTGTGTGCCCGTCTGTTGTGTGACTCTGGT"
