@@ -20,10 +20,9 @@ resources:
     mm10: /data/groups/lab_bock/shared/resources/genomes/mm10/mm10.refFlat
 
 tools:
-  # in the tools section, you may provide the CpG-seq pipeline with the absolute path of the required bioinformatic tools
+  # in the tools section, you may provide the Drop-seq pipeline with the absolute path of the required bioinformatic tools
   # set to 'java' or 'picard', to use the tool from your $PATH variable
   dropseq_tools_root: /data/groups/lab_bock/shared/resources/tools/Drop-seq_tools-1.12/
-  # piccard_jar: /cm/shared/apps/picard-tools/1.118/picard-1.118.jar
   piccard_jar: /data/groups/lab_bock/shared/resources/tools/Drop-seq_tools-1.12/3rdParty/picard/picard.jar
   star: /cm/shared/apps/star/2.4.2a/STAR
 
