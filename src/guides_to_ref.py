@@ -55,7 +55,7 @@ gtf_template = """{chrom}_chrom\thavana\tgene\t1\t{length}\t.\t+\t.\tgene_id "{i
 """
 
 # initialize project
-prj = Project(os.path.join("metadata", "config.separate.yaml"))
+prj = Project(os.path.join("metadata", "config.yaml"))
 
 # read in guide annotation
 annotation = pd.read_csv(os.path.join("metadata", "guide_annotation.csv"))
