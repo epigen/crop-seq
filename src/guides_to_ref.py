@@ -61,7 +61,9 @@ prj = Project(os.path.join("metadata", "config.yaml"))
 annotation = pd.read_csv(os.path.join("metadata", "guide_annotation.csv"))
 
 for genome in prj.genomes.__dict__.keys():
-    output_dir = os.path.join(prj.paths.output_dir, "spiked_genomes")
+    if genome.startswith("_"):
+        continue
+    output_dir = os.path.join(prj.output_dir, "spiked_genomes")
     for library in annotation['library'].drop_duplicates():
 
         library_annotation = annotation[annotation['library'] == library]
@@ -78,7 +80,7 @@ for genome in prj.genomes.__dict__.keys():
         output_gtf = os.path.join(spiked_dir, "gRNA_spikes.gtf")
 
         # write gRNA library annotation
-        write_annotation(library_annotation, prj.config, output_fasta, output_gtf)
+        write_annotation(library_annotation, prj, output_fasta, output_gtf)
 
         # Make STAR index and supporting files
         if genome_ref == "hg38_spiked":
