@@ -34,9 +34,9 @@ def get_reads_in_construct(bam, guide_annotation):
 
         # get position of alignment
         guide_seq = guide_annotation[guide_annotation["oligo_name"] == chrom]['sequence'].squeeze()
-        chrom_size = len(prj.config['crop-seq']['u6'] + guide_seq + prj.config['crop-seq']['rest'])
-        guide_start_pos = len(prj.config['crop-seq']['u6']) + 1
-        guide_end_pos = chrom_size - len(prj.config['crop-seq']['rest'])
+        chrom_size = len(prj['crop-seq']['u6'] + guide_seq + prj['crop-seq']['rest'])
+        guide_start_pos = len(prj['crop-seq']['u6']) + 1
+        guide_end_pos = chrom_size - len(prj['crop-seq']['rest'])
 
         # for each read
         for aln in bam_handle.fetch(reference=chrom + "_chrom"):
@@ -92,18 +92,18 @@ def get_reads_in_Cas9_construct(bam):
     reads = pd.DataFrame()
 
     sequence = "".join([
-        prj.config['crop-seq']['cas9'],
-        prj.config['crop-seq']['nls'],
-        prj.config['crop-seq']['flag'],
-        prj.config['crop-seq']['p2a'],
-        prj.config['crop-seq']['blast'],
-        prj.config['crop-seq']['space'],
-        prj.config['crop-seq']['virus_ltr']])
+        prj['crop-seq']['cas9'],
+        prj['crop-seq']['nls'],
+        prj['crop-seq']['flag'],
+        prj['crop-seq']['p2a'],
+        prj['crop-seq']['blast'],
+        prj['crop-seq']['space'],
+        prj['crop-seq']['virus_ltr']])
 
     # get position of alignment
     chrom_size = len(sequence)
     guide_start_pos = 0
-    guide_end_pos = chrom_size - len(prj.config['crop-seq']['cas9'])
+    guide_end_pos = chrom_size - len(prj['crop-seq']['cas9'])
 
     # for each read
     for aln in bam_handle.fetch(reference=chrom + "_chrom"):
@@ -355,8 +355,8 @@ def plot_assignments(scores, assignment, coverage):
 
 # Start project, add samples
 prj = Project(os.path.join("metadata", "config.yaml"))
-prj.add_sample_sheet()
-prj.paths.results_dir = results_dir = os.path.join("results")
+# only used in older versions of looper
+# prj.add_sample_sheet() 
 
 # get guide annotation
 guide_annotation = pd.read_csv(os.path.join("metadata", "guide_annotation.csv"))
@@ -406,8 +406,8 @@ for sample in [s for s in prj.samples if hasattr(s, "replicate")]:  # [s for s i
 from itertools import chain
 colors = sns.color_palette("colorblind")
 
-u6 = prj.config['crop-seq']['u6']
-rest = prj.config['crop-seq']['rest']
+u6 = prj['crop-seq']['u6']
+rest = prj['crop-seq']['rest']
 
 for sample in [s for s in prj.samples if s.name == "CROP-seq_HEK293T_1_resequenced"]:
     # read in read/construct overlap information
