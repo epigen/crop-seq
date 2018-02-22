@@ -395,8 +395,9 @@ def gRNA_swarmplot(s1, s2, prefix=""):
 
 
 prj = Project(os.path.join("metadata", "config.yaml"))
-prj.add_sample_sheet()
-prj.paths.results_dir = results_dir = os.path.join("results", "screen_dynamics")
+# for older looper versions:
+# prj.add_sample_sheet()
+results_dir = os.path.join("results", "screen_dynamics")
 
 sample_annotation = prj.sheet.df
 

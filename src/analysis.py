@@ -2041,15 +2041,16 @@ def flow_analysis(df, flow_df):
 def main():
 
     prj = Project(os.path.join("metadata", "config.yaml"))
-    prj.add_sample_sheet()
-    prj.paths.results_dir = results_dir = os.path.join("results")
+    # for older looper versions:
+    # prj.add_sample_sheet()
+    results_dir = os.path.join("results")
 
     # get guide annotation
     guide_annotation = os.path.join("metadata", "guide_annotation.csv")
     guide_annotation = pd.read_csv(guide_annotation)
 
     # get expression
-    for experiment in prj.sheet.df['experiment'].dropna().drop_duplicates():
+    for experiment in prj.sheet['experiment'].dropna().drop_duplicates():
         for n_genes in [500]:
             print(experiment, n_genes)
 

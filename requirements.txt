@@ -1,12 +1,12 @@
--e git+https://github.com/epigen/looper.git@dev#egg=looper
--e git+https://github.com/epigen/pypiper.git@dev#egg=pypiper
-# -e git+https://github.com/epigen/pipelines.git@dev#egg=pipelines
+-e git+https://github.com/epigen/looper.git@v0.7.2#egg=looper
+-e git+https://github.com/epigen/pypiper.git@v0.6#egg=pypiper
+# -e git+https://github.com/epigen/open_pipelines.git@master#egg=pipelines
 
 argparse
 FlowCytometryTools
 h5py
 matplotlib
-numpy
+numpy>=1.6.1
 pandas>=0.16
 scikit-learn==0.17
 scipy

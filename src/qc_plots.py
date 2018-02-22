@@ -21,8 +21,9 @@ matplotlib.rc('text', usetex=False)
 
 # Start project, add samples
 prj = Project(os.path.join("metadata", "config.yaml"))
-prj.add_sample_sheet()
-prj.paths.results_dir = results_dir = os.path.join("results")
+# for older looper versions:
+# prj.add_sample_sheet()
+results_dir = os.path.join("results")
 
 
 # This is produced from the pipeline statistics report and assembled

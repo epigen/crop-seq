@@ -23,11 +23,12 @@ Here are a few steps needed to reproduce it:
 
 1. Clone the repository (`git clone git@github.com:epigen/crop-seq.git`) or download it from here: https://github.com/epigen/crop-seq/releases/tag/final_version
 2. Install required software for the analysis:`make requirements` or `pip install -r requirements.txt`
+ - This includes looper (v0.7.2) [and pypiper (v0.6) - if you want to rerun the raw data].
 
 If you wish to reproduce the processing of the raw data (all data have been deposited at [GEO](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE92872)), run these steps:
 
 1. Download the data locally from GEO.
-2. Prepare a [Looper](https://github.com/epigen/looper) configuration file similar to [these](metadata/config.yaml) that fit your local computing environment.
+2. Prepare a [Looper](https://github.com/epigen/looper) configuration file similar to [these](metadata/config.yaml) that fits your local computing environment.
 3. Prepare a genome annotation containing gRNA sequences using `make makeref` and adapt the pipeline [configuration file](metadata/pipeline_config.yaml) to point to the created files.
 4. Run samples through the pipeline: `make preprocessing` or `looper run metadata/config.yaml`
 

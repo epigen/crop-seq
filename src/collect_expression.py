@@ -68,15 +68,16 @@ def collect_ESAT_output(samples):
 
 
 prj = Project(os.path.join("metadata", "config.yaml"))
-prj.add_sample_sheet()
-prj.paths.results_dir = os.path.join("results")
+# for older looper versions:
+# prj.add_sample_sheet()
+results_dir = os.path.join("results")
 
 # get guide annotation
 guide_annotation = pd.read_csv(os.path.join("metadata", "guide_annotation.csv"))
 
 
 # Gather gRNA assignment info across all samples used
-for experiment, rows in prj.sheet.df.groupby(['experiment']):
+for experiment, rows in prj.sheet.groupby(['experiment']):
     # merge gRNA data
     reads = pd.DataFrame()
     scores = pd.DataFrame()
@@ -103,21 +104,21 @@ for experiment, rows in prj.sheet.df.groupby(['experiment']):
     # group gRNAs per gene or control group
     assignment = pd.merge(assignment, guide_annotation, left_on='assignment', right_on='oligo_name')
 
-    reads.to_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)), index=False)
-    scores.to_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_scores.all.csv".format(experiment)), index=False)
-    assignment.to_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)), index=False)
+    reads.to_csv(os.path.join(results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)), index=False)
+    scores.to_csv(os.path.join(results_dir, "{}.guide_cell_scores.all.csv".format(experiment)), index=False)
+    assignment.to_csv(os.path.join(results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)), index=False)
 
 
 # Gather transcriptome across all samples used and annotate with gRNA info
 for n_genes in [500]:
     print("Merging...")
     print("n_genes", "experiment", "i", "sample.name", "sample.condition", "sample.replicate:")
-    for experiment, rows in prj.sheet.df.groupby(['experiment']):
+    for experiment, rows in prj.sheet.groupby(['experiment']):
         if experiment == "CROP-seq_HEK_test":
             continue
-        reads = pd.read_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)))
-        scores = pd.read_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_scores.all.csv".format(experiment)))
-        assignment = pd.read_csv(os.path.join(prj.paths.results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)))
+        reads = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_gRNA_assignment.all.csv".format(experiment)))
+        scores = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_scores.all.csv".format(experiment)))
+        assignment = pd.read_csv(os.path.join(results_dir, "{}.guide_cell_assignment.all.csv".format(experiment)))
 
         # merge expression
         exp_all = pd.DataFrame()
@@ -157,16 +158,16 @@ for n_genes in [500]:
 
         # save only assigned cells
         exp_all_assigned = exp_all[exp_all.columns[~pd.isnull(exp_all.columns.get_level_values('grna'))]]
-        exp_all_assigned.to_hdf(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
+        exp_all_assigned.to_hdf(os.path.join(results_dir, "{}.digital_expression.{}genes.only_assigned.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
 
         # exp_all = exp_all.to_sparse(fill_value=0)
-        exp_all.to_csv(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.csv.gz".format(experiment, n_genes)), index=True, header=None, compression="gzip")
-        # exp_all.to_pickle(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.pickle".format(experiment, n_genes)))
-        exp_all.to_hdf(os.path.join(prj.paths.results_dir, "{}.digital_expression.{}genes.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
+        exp_all.to_csv(os.path.join(results_dir, "{}.digital_expression.{}genes.csv.gz".format(experiment, n_genes)), index=True, header=None, compression="gzip")
+        # exp_all.to_pickle(os.path.join(results_dir, "{}.digital_expression.{}genes.pickle".format(experiment, n_genes)))
+        exp_all.to_hdf(os.path.join(results_dir, "{}.digital_expression.{}genes.hdf5.gz".format(experiment, n_genes)), "exp_matrix", compression="gzip")
 
 
 # Collect bulk RNA-seq data
-for experiment in prj.sheet.df['experiment'].drop_duplicates().dropna():
+for experiment in prj.sheet['experiment'].drop_duplicates().dropna():
     samples = [sample for sample in prj.samples if hasattr(sample, "experiment")]
     samples = [sample for sample in samples if sample.experiment == experiment and sample.library == "SMART-seq"]
     # Collect transcript counts for Bulk samples
